@@ -1,0 +1,25 @@
+# Credentials
+Git_credential.txt
+git_credential.json
+git_credentials.json
+.env
+.env.*
+*.pem
+*.key
+
+# Node / Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated data (non source code)
+graphify-out/
+ag-stop-probe.json
+Prompt.md
+
+

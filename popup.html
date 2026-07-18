@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safe Exm</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <div class="logo-area">
+        <span class="logo-icon">🧠</span>
+        <span class="logo-title">Safe Exm</span>
+      </div>
+      <div class="status-badge" id="statusBadge">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="connectionStatus">Prêt...</span>
+      </div>
+    </header>
+
+    <main>
+      <!-- Zone d'action centrale massive -->
+      <div class="action-zone">
+        <button id="analyzeBtn" class="action-btn-massive">
+          <span class="btn-icon">🔍</span>
+          <span class="btn-text">Trouver les Réponses</span>
+        </button>
+      </div>
+
+      <!-- Section Progression (masquée par défaut) -->
+      <div class="progress-section" id="progressSection" style="display: none;">
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+        </div>
+        <div class="progress-info">
+          <span class="progress-text" id="progressText">Analyse en cours...</span>
+          <span class="progress-percentage" id="progressPercentage">0%</span>
+        </div>
+      </div>
+
+      <!-- Statut du site reconnu (contexte succinct) -->
+      <div class="schema-status unknown" id="schemaStatus" style="display: none;">
+        <span class="schema-icon" id="schemaIcon">🔍</span>
+        <span class="schema-text" id="schemaText">Vérification du site...</span>
+        <button class="btn schema-btn" id="schemaRediscoverBtn" title="Ré-analyser la structure">🔄</button>
+      </div>
+
+      <!-- Raccourcis clavier masqués (détails discrets) -->
+      <details class="shortcuts-accordion">
+        <summary>⌨️ Raccourcis clavier</summary>
+        <div class="shortcuts-content">
+          <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd> Activer/Désactiver l'extension</p>
+          <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd> Analyser le quiz actuel</p>
+          <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>3</kbd> Mode automatique (Auto-run)</p>
+          <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> Effacer les surlignages</p>
+        </div>
+      </details>
+    </main>
+
+    <footer>
+      <!-- Options secondaires discrètes -->
+      <div class="footer-options">
+        <label class="toggle-label">
+          <input type="checkbox" id="extensionToggle">
+          <span class="toggle-custom"></span>
+          <span>Actif</span>
+        </label>
+        
+        <label class="toggle-label">
+          <input type="checkbox" id="autoModeToggle">
+          <span class="toggle-custom"></span>
+          <span>Auto</span>
+        </label>
+        
+        <button id="clearBtn" class="clear-btn" title="Effacer les marquages">🗑️ Effacer</button>
+      </div>
+      
+      <div class="settings-link-container">
+        <a href="settings.html" target="_blank" id="settingsLink">⚙️ Ouvrir les Paramètres</a>
+      </div>
+    </footer>
+  </div>
+
+  <script src="providers.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>

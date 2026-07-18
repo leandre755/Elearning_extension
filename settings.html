@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paramètres - Safe Exm</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>⚙️ Configuration de Safe Exm</h1>
+      <p class="header-subtitle">Personnalisez le comportement, la discrétion et les moteurs d'intelligence de votre compagnon d'étude.</p>
+    </header>
+
+    <!-- Navigation par Onglets -->
+    <nav class="settings-tabs" role="tablist" aria-label="Sections des paramètres">
+      <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-essential" id="btn-essential">
+        👁️ Essentiel
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-advanced" id="btn-advanced">
+        🔄 Avancé
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-expert" id="btn-expert" style="margin-left: auto;">
+        🛠️ Expert
+      </button>
+    </nav>
+
+    <main>
+      <!-- ========================================================= -->
+      <!-- ONGLET 1 : ESSENTIEL                                      -->
+      <!-- ========================================================= -->
+      <div id="tab-essential" class="tab-content active" role="tabpanel" aria-labelledby="btn-essential">
+        
+        <!-- Section Clés d'API -->
+        <section class="settings-card">
+          <h2>🔑 Moteurs d'IA (Clés d'API)</h2>
+          <p class="section-description">Configurez au moins un fournisseur. Si plusieurs clés sont configurées, l'extension les utilisera en cascade en cas d'erreur de quota (HTTP 429).</p>
+
+          <div class="keys-accordion">
+            <!-- GROQ -->
+            <details class="key-card" name="api-keys" id="card-groq">
+              <summary class="key-card-header">
+                <span class="provider-title">⚡ Groq (Gratuit et Ultra-Rapide)</span>
+                <span class="key-status-badge badge-empty" id="groqStatusBadge">Non configurée</span>
+              </summary>
+              <div class="key-card-content">
+                <div class="setting-item">
+                  <label for="groqApiKey">Clé API Groq</label>
+                  <div class="input-group">
+                    <input type="password" id="groqApiKey" placeholder="gsk_...">
+                    <button type="button" class="toggle-visibility" data-target="groqApiKey">👁️</button>
+                    <button type="button" class="test-btn" data-provider="groq">Tester</button>
+                  </div>
+                  <p class="help-text">Créez une clé sur <a href="https://console.groq.com/" target="_blank">console.groq.com</a></p>
+                </div>
+              </div>
+            </details>
+
+            <!-- GEMINI -->
+            <details class="key-card" name="api-keys" id="card-gemini">
+              <summary class="key-card-header">
+                <span class="provider-title">💎 Google Gemini (Gratuit)</span>
+                <span class="key-status-badge badge-empty" id="geminiStatusBadge">Non configurée</span>
+              </summary>
+              <div class="key-card-content">
+                <div class="setting-item">
+                  <label for="geminiApiKey">Clé API Gemini</label>
+                  <div class="input-group">
+                    <input type="password" id="geminiApiKey" placeholder="AIza...">
+                    <button type="button" class="toggle-visibility" data-target="geminiApiKey">👁️</button>
+                    <button type="button" class="test-btn" data-provider="gemini">Tester</button>
+                  </div>
+                  <p class="help-text">Créez une clé gratuite sur <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com</a></p>
+                </div>
+              </div>
+            </details>
+
+            <!-- CLAUDE -->
+            <details class="key-card" name="api-keys" id="card-claude">
+              <summary class="key-card-header">
+                <span class="provider-title">🟣 Anthropic Claude (Premium)</span>
+                <span class="key-status-badge badge-empty" id="claudeStatusBadge">Non configurée</span>
+              </summary>
+              <div class="key-card-content">
+                <div class="setting-item">
+                  <label for="claudeApiKey">Clé API Claude</label>
+                  <div class="input-group">
+                    <input type="password" id="claudeApiKey" placeholder="sk-ant-...">
+                    <button type="button" class="toggle-visibility" data-target="claudeApiKey">👁️</button>
+                    <button type="button" class="test-btn" data-provider="claude">Tester</button>
+                  </div>
+                  <p class="help-text">Créez une clé sur <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></p>
+                </div>
+              </div>
+            </details>
+
+            <!-- MISTRAL -->
+            <details class="key-card" name="api-keys" id="card-mistral">
+              <summary class="key-card-header">
+                <span class="provider-title">🌀 Mistral AI (Souverain)</span>
+                <span class="key-status-badge badge-empty" id="mistralStatusBadge">Non configurée</span>
+              </summary>
+              <div class="key-card-content">
+                <div class="setting-item">
+                  <label for="mistralApiKey">Clé API Mistral</label>
+                  <div class="input-group">
+                    <input type="password" id="mistralApiKey" placeholder="...">
+                    <button type="button" class="toggle-visibility" data-target="mistralApiKey">👁️</button>
+                    <button type="button" class="test-btn" data-provider="mistral">Tester</button>
+                  </div>
+                  <p class="help-text">Obtenez votre clé sur <a href="https://console.mistral.ai/" target="_blank">console.mistral.ai</a></p>
+                </div>
+              </div>
+            </details>
+
+            <!-- NVIDIA -->
+            <details class="key-card" name="api-keys" id="card-nvidia">
+              <summary class="key-card-header">
+                <span class="provider-title">🟢 NVIDIA NIM (Rapide)</span>
+                <span class="key-status-badge badge-empty" id="nvidiaStatusBadge">Non configurée</span>
+              </summary>
+              <div class="key-card-content">
+                <div class="setting-item">
+                  <label for="nvidiaApiKey">Clé API NVIDIA NIM</label>
+                  <div class="input-group">
+                    <input type="password" id="nvidiaApiKey" placeholder="nvapi-...">
+                    <button type="button" class="toggle-visibility" data-target="nvidiaApiKey">👁️</button>
+                    <button type="button" class="test-btn" data-provider="nvidia">Tester</button>
+                  </div>
+                  <p class="help-text">Obtenez votre clé sur <a href="https://build.nvidia.com/" target="_blank">build.nvidia.com</a></p>
+                </div>
+              </div>
+            </details>
+
+            <!-- FIREWORKS -->
+            <details class="key-card" name="api-keys" id="card-fireworks">
+              <summary class="key-card-header">
+                <span class="provider-title">🎆 Fireworks AI (Performant)</span>
+                <span class="key-status-badge badge-empty" id="fireworksStatusBadge">Non configurée</span>
+              </summary>
+              <div class="key-card-content">
+                <div class="setting-item">
+                  <label for="fireworksApiKey">Clé API Fireworks</label>
+                  <div class="input-group">
+                    <input type="password" id="fireworksApiKey" placeholder="...">
+                    <button type="button" class="toggle-visibility" data-target="fireworksApiKey">👁️</button>
+                    <button type="button" class="test-btn" data-provider="fireworks">Tester</button>
+                  </div>
+                  <p class="help-text">Obtenez votre clé sur <a href="https://fireworks.ai/" target="_blank">fireworks.ai</a></p>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <!-- Section Discrétion (Curseur unique) -->
+        <section class="settings-card">
+          <h2>🎨 Discrétion du marquage</h2>
+          <p class="section-description">Ajustez le niveau de furtivité de l'outil dans vos pages de quiz pour éviter d'attirer l'attention des surveillants ou proctors.</p>
+
+          <div class="discretion-slider-container">
+            <input type="range" id="discretionSlider" min="1" max="4" step="1" value="2">
+            
+            <div class="discretion-steps">
+              <span class="step-label" data-value="1">🕵️ Ultra-Furtif</span>
+              <span class="step-label" data-value="2">🤫 Furtif</span>
+              <span class="step-label" data-value="3">👁️ Visible</span>
+              <span class="step-label" data-value="4">🔥 Glow</span>
+            </div>
+            
+            <div class="discretion-preview-box" id="discretionPreviewBox">
+              <p id="discretionDescription">Sélecteur...</p>
+              <div class="highlight-preview-element" id="highlightPreviewElement">
+                <span>Option de quiz A</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Color Customizer hidden unless visible/glow is active -->
+          <div class="color-customizer-row" id="colorCustomizerRow">
+            <div class="custom-color-item">
+              <label for="highlightColor">Couleur</label>
+              <input type="color" id="highlightColor" value="#4DA8DA">
+            </div>
+            <div class="custom-color-item flex-1">
+              <label for="highlightIntensity">Intensité</label>
+              <input type="range" id="highlightIntensity" min="0.1" max="1" step="0.1" value="0.4">
+            </div>
+          </div>
+        </section>
+
+        <!-- Section Contexte (Base de connaissances) -->
+        <section class="settings-card">
+          <h2>📚 Contexte du cours</h2>
+          <p class="section-description">Fournissez des notes de cours pour orienter et guider les réponses de l'IA.</p>
+
+          <div class="setting-item">
+            <label for="contextText">Copier-coller du texte</label>
+            <textarea id="contextText" rows="4" placeholder="Collez vos notes, théorèmes ou passages clés du cours..."></textarea>
+          </div>
+
+          <div class="setting-item">
+            <label>Fichiers joints (.txt, .md, .pdf, .docx)</label>
+            <div class="file-upload-area" id="fileUploadArea">
+              <input type="file" id="fileInput" multiple accept=".txt,.pdf,.doc,.docx,.md">
+              <div class="file-upload-content">
+                <span class="upload-icon">📁</span>
+                <p class="upload-title">Glissez vos fichiers ou cliquez ici</p>
+                <p class="help-text">Formats : Texte brut, Markdown, PDF, Word</p>
+              </div>
+            </div>
+            <div id="fileList" class="file-list"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ========================================================= -->
+      <!-- ONGLET 2 : AVANCÉ                                         -->
+      <!-- ========================================================= -->
+      <div id="tab-advanced" class="tab-content" role="tabpanel" aria-labelledby="btn-advanced">
+        
+        <!-- Priorité des Fournisseurs -->
+        <section class="settings-card">
+          <h2>🔄 Priorité du Routeur Intelligent (Drag & Drop)</h2>
+          <p class="section-description">Faites glisser les fournisseurs pour réorganiser l'ordre d'appel par le routeur de secours.</p>
+          
+          <div id="priorityList" class="priority-list">
+            <!-- Dynamique -->
+          </div>
+        </section>
+
+        <!-- Recherche Agentique (SERP API) -->
+        <section class="settings-card">
+          <h2>🕵️ Recherche Web (SerpAPI)</h2>
+          <p class="section-description">Permet à l'IA d'interroger le web en temps réel si elle manque d'assurance sur une question.</p>
+
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="agenticSearch">
+              Activer la recherche web adaptative
+            </label>
+          </div>
+
+          <div class="setting-item" id="serpKeyContainer">
+            <label for="serpApiKey">Clé SerpAPI</label>
+            <div class="input-group">
+              <input type="password" id="serpApiKey" placeholder="Clé d'API SerpAPI...">
+              <button type="button" class="toggle-visibility" data-target="serpApiKey">👁️</button>
+            </div>
+            <p class="help-text">Obtenez une clé sur <a href="https://serpapi.com/" target="_blank">serpapi.com</a></p>
+          </div>
+        </section>
+
+        <!-- Configuration de la capture d'images -->
+        <section class="settings-card">
+          <h2>📸 Extraction Visuelle (Modèles Vision)</h2>
+          <p class="section-description">Ajustez la sensibilité d'analyse des schémas, graphiques ou équations du quiz.</p>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="captureImages" checked>
+              Analyser les images du quiz par défaut
+            </label>
+          </div>
+
+          <div class="setting-item slider-row">
+            <label for="imageMinSize">Taille minimale de capture</label>
+            <input type="range" id="imageMinSize" min="10" max="200" step="10" value="50">
+            <span class="slider-value" id="imageMinSizeDisplay">50 px</span>
+          </div>
+
+          <div class="setting-item slider-row">
+            <label for="imageQuality">Qualité de compression JPEG</label>
+            <input type="range" id="imageQuality" min="0.1" max="1" step="0.1" value="0.8">
+            <span class="slider-value" id="imageQualityDisplay">0.8</span>
+          </div>
+        </section>
+
+        <!-- Cache des Schémas de Sites -->
+        <section class="settings-card">
+          <h2>🧠 Détection Adaptative (Cache DOM)</h2>
+          <p class="section-description">Pour éviter les appels LLM répétitifs, l'extension met en cache la structure de chaque quiz reconnu.</p>
+          
+          <div id="schemaList" class="schema-cache-list">
+            <!-- Dynamique -->
+          </div>
+
+          <div class="action-buttons-row">
+            <button type="button" id="refreshSchemasBtn" class="btn secondary">🔄 Rafraîchir</button>
+            <button type="button" id="clearAllSchemasBtn" class="btn danger">🗑️ Purger tout le cache</button>
+          </div>
+        </section>
+
+        <!-- Comportement Général -->
+        <section class="settings-card">
+          <h2>⚙️ Raccourcis et Comportement</h2>
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoMode">
+              Démarrer automatiquement l'analyse au chargement de la page
+            </label>
+            <p class="help-text">Raccourci système alternatif : Ctrl+Shift+3</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ========================================================= -->
+      <!-- ONGLET 3 : EXPERT                                         -->
+      <!-- ========================================================= -->
+      <div id="tab-expert" class="tab-content" role="tabpanel" aria-labelledby="btn-expert">
+        
+        <!-- Identifiants de modèles avancés -->
+        <section class="settings-card">
+          <h2>🤖 Identifiants de Modèles Spécifiques</h2>
+          <p class="section-description">Surchargez les modèles par défaut utilisés pour le texte et la vision. Laissez vide pour utiliser les modèles optimaux du système.</p>
+          
+          <div id="modelOverrides" class="model-overrides-grid">
+            <!-- Dynamique -->
+          </div>
+        </section>
+
+        <!-- Sélecteurs CSS custom -->
+        <section class="settings-card">
+          <h2>🎯 Sélecteurs DOM Personnalisés</h2>
+          <p class="section-description">Si un site particulier de quiz résiste à la détection intelligente, forcez des sélecteurs CSS précis.</p>
+
+          <div class="setting-item">
+            <label for="customQuestionSelector">Sélecteur CSS des questions</label>
+            <input type="text" id="customQuestionSelector" placeholder="Ex: .quiz-question, .qtext">
+          </div>
+
+          <div class="setting-item">
+            <label for="customAnswerSelector">Sélecteur CSS des options/réponses</label>
+            <input type="text" id="customAnswerSelector" placeholder="Ex: .answer-option, .option">
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Pied de page collant (Sticky Save) -->
+    <footer class="sticky-footer">
+      <button id="saveBtn" class="btn primary">💾 Sauvegarder les modifications</button>
+      <button id="resetBtn" class="btn secondary">🔄 Réinitialiser</button>
+      <span id="saveStatus" class="save-status"></span>
+    </footer>
+  </div>
+
+  <script src="providers.js"></script>
+  <script src="schema-cache.js"></script>
+  <script src="lib/pdf.min.js"></script>
+  <script src="lib/mammoth.browser.min.js"></script>
+  <script src="settings.js"></script>
+</body>
+
+</html>

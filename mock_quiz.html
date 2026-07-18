@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Mock Quiz — Safe Exm Test</title>
+  <style>
+    body {
+      background-color: #0d1e2d;
+      color: #e2f0fc;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+    }
+    h1 {
+      color: #4DA8DA;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .question-card {
+      background: #172A3A;
+      border: 1px solid rgba(77, 168, 218, 0.2);
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 25px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      transition: all 0.3s ease;
+    }
+    .question-text h3 {
+      margin-top: 0;
+      color: #fff;
+      font-size: 1.2rem;
+    }
+    .options-list {
+      margin-top: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    label {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 12px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background 0.2s ease;
+    }
+    label:hover {
+      background: rgba(77, 168, 218, 0.08);
+      border-color: rgba(77, 168, 218, 0.3);
+    }
+    input[type="radio"], input[type="checkbox"] {
+      accent-color: #4DA8DA;
+    }
+    .input-container {
+      margin-top: 15px;
+      position: relative;
+    }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(0, 0, 0, 0.2);
+      color: #fff;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+    input[type="text"]:focus {
+      border-color: #4DA8DA;
+    }
+    .btn-submit {
+      background: linear-gradient(135deg, #4DA8DA 0%, #007bb8 100%);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      display: block;
+      margin: 30px auto 0;
+      box-shadow: 0 4px 15px rgba(77, 168, 218, 0.4);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Mock Quiz de Validation</h1>
+
+  <div class="question-card">
+    <div class="question-text">
+      <h3>Question 1 : Quelle est la capitale de la France ?</h3>
+    </div>
+    <div class="options-list">
+      <label>
+        <input type="radio" name="q1" value="londres">
+        <span class="option-text">Londres</span>
+      </label>
+      <label>
+        <input type="radio" name="q1" value="paris">
+        <span class="option-text">Paris</span>
+      </label>
+      <label>
+        <input type="radio" name="q1" value="berlin">
+        <span class="option-text">Berlin</span>
+      </label>
+      <label>
+        <input type="radio" name="q1" value="madrid">
+        <span class="option-text">Madrid</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="question-card">
+    <div class="question-text">
+      <h3>Question 2 : Quel outil permet d'automatiser des tests de navigateurs web ?</h3>
+    </div>
+    <div class="input-container">
+      <input type="text" id="q2-input" placeholder="Saisir votre réponse...">
+    </div>
+  </div>
+
+  <button class="btn-submit">Soumettre les réponses</button>
+
+</body>
+</html>
