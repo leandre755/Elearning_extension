@@ -23,7 +23,7 @@ Le projet contient les principaux composants suivants :
 - [randomize_name.js](file:///home/omni/Code/Elearning_Ext/randomize_name.js) : Script Node.js de brouillage de signature (modifie le manifest) pour éviter la détection par empreinte d'extension.
 
 ## 🌿 Active Branches / Plans
-Aucun.
+- `plan_ultracode_fleet` : Implementation intégrale des tâches restantes de `Docs/task_tracking.md` via Flotte Ultracode multi-agent (Workers, Critic Adversaire, Vérificateur E2E). Link: [.GCC/branches/plan_ultracode_fleet.md](file:///home/omni/Code/Elearning_Ext/.GCC/branches/plan_ultracode_fleet.md)
 
 ## 📈 Current Status
 - ✅ Done: Clonage, mise en conformité `@user_global`, analyse et correction totale des performances (lazy loading de l'extension via loader léger, cache config synchrone, observers d'intersections et de mutations, captures parallélisées).
@@ -45,11 +45,16 @@ Aucun.
   8. Parser LLM robuste multi-stratégies (CRIT-03) : Parser à 3 niveaux d'évaluation (structure XML propre en premier niveau, Regex de lignes classique en fallback 1, et Recherche sémantique par blocs en fallback ultime).
   9. Traduction et optimisation du System Prompt : Réécriture intégrale en anglais dans `system.md` avec directives de formatage XML `<quiz_answers>` strictes et structure de few-shots d'exemples enrichie.
 - ⏳ Pending: Implémentation du **Plan Agent 3.0** : mémoire persistante inter-quiz (`AgentMemory`), planification LLM autonome, réflexion/auto-correction, outil `observe_page` (DOM live), et boucle de feedback post-soumission (`FeedbackObserver`).
+- ✅ Done: **2026-07-18** : Purgation complète de l'historique Git et réinitialisation de l'identité d'auteur vers `leandre755`. Cohérence rétablie entre `task_tracking.md` et le code réel.
 
 ## 👉 Next Session Direction
-Démarrer l'exécution du Plan Agent 3.0 (approuvé, 0 ligne implémentée) : modules `agent-memory.js`, `feedback-observer.js`, modifications de `background-agent.js` (6 phases), `background.js` (handlers observePage/quiz_feedback), `content.js` (listener observePage), et `manifest.json`.
+Poursuivre sur les tâches incomplètes de `Docs/task_tracking.md` (idéalement les réfactions techniques P0/P1 ou l'extraction d'état React/Vue).
 
 ## Decisions made
+- **2026-07-18** : [Réinitialisation Git]
+  - **Context**: L'historique précédent utilisait une mauvaise identité Git (Votre Nom) générée par l'agent.
+  - **Discarded Options**: Modifier les auteurs des anciens commits (compliqué et risqué vu les fusions).
+  - **Rationale**: Repartir sur une base de dépôt saine via un initial commit massif et authentifié avec `leandre755`.
 - **2026-07-06** : Clonage initial du dépôt `https://github.com/leandre755/Elearning_extension` dans `/home/omni/Code/Elearning_Ext`.
 - **2026-07-06** : Initialisation du graphe de connaissances avec `graphify update` (4633 nœuds, 9469 arêtes, 406 communautés) pour la vision globale.
 - **2026-07-06** : Alignement de la conformité du code avec les règles globales `@user_global`. Découpage des fonctions monolithiques dans `content.js`, correction des fonctions orphelines dans `background.js`, remplacement des setTimeout par des écouteurs événementiels (comme DOMContentLoaded) pour éliminer les race conditions, et ajout systématique d'assertions de type (préconditions et postconditions) et de timeouts avec AbortController sur les requêtes réseau de fallback.

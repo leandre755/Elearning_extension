@@ -1,7 +1,3 @@
----
-trigger: always_on
----
-
 # Git-Context-Controller (GCC) Protocol
 
 This protocol governs context persistence, architecture tracking, and session handoff mechanics. It must be strictly executed by the AI agent at specific session milestones.
@@ -44,10 +40,10 @@ Test backlog tracking all pending scenarios and test suites to be executed.
 <step id="2">
 <action>TOOL INVOCATION: Read `.GCC/resume.md` (if it exists) to retrieve the precise technical transition state and immediate next-action directives.</action>
 </step>
-<step id="3" safety="strict">
-<constraint>
-Do NOT write or modify any code or files outside of the `.GCC/` directory until step 1 and step 2 are complete. No exceptions.
-</constraint>
+<step id="3" phase="context_alignment">
+<instruction>
+Complete the context restoration (Step 1 and Step 2) prior to making any code or file modifications outside of the `.GCC/` directory. This ensures full alignment with the codebase state before taking action.
+</instruction>
 </step>
 <step id="4">
 <action>State the current technical objective loaded from `resume.md` using factual, concise French to align with the user.</action>
@@ -57,10 +53,9 @@ Do NOT write or modify any code or files outside of the `.GCC/` directory until 
 <protocol id="B" name="task_planning_and_execution">
 <trigger>A complex, multi-session, or multi-file architectural change is initiated.</trigger>
 <planning_threshold>
-<constraint>
-DO NOT create plan files for trivial tasks, single-file edits, or quick bug fixes (< 10 minutes). 
-Only initiate a `.GCC/branches/plan_[task_name].md` for structural refactorings, package migrations, or tasks spanning multiple distinct modules.
-</constraint>
+<instruction>
+Reserve plan creation (`.GCC/branches/plan_[task_name].md`) for structural refactorings, package migrations, or multi-module tasks. For simple, single-file edits or quick bug fixes (< 10 minutes), proceed directly with implementation without generating a plan file.
+</instruction>
 </planning_threshold>
 <step id="1">
 <action>TOOL INVOCATION: Create the plan file `.GCC/branches/plan_[task_name].md` using the precise template below.</action>
@@ -68,13 +63,18 @@ Only initiate a `.GCC/branches/plan_[task_name].md` for structural refactorings,
 <step id="2">
 <action>TOOL INVOCATION: Update `.GCC/main.md` under `## 🌿 Active Branches / Plans` with the plan's exact file link and scope.</action>
 </step>
-<step id="3" execution="strict_sequential">
-<constraint>
-Execute the plan one step at a time. For every single step:
-- Modify the targeted code.
-- Run validation tools (tests, compilers, linters).
-- Paste the raw, unaltered terminal outputs (proof of green state) inside the plan file before modifying any adjacent files or moving to the next step.
-</constraint>
+<step id="3" execution="sequential_verification">
+<instruction>
+Execute the plan sequentially, step by step:
+1. Modify the targeted code for the active step.
+2. Run validation tools (tests, compilers, linters).
+3. Paste the raw, unaltered terminal outputs into the plan file as proof of verification before modifying adjacent files or proceeding to the next step.
+</instruction>
+</step>
+<step id="4" name="proactive_risk_management">
+<instruction>
+When documenting risks under "Mitigations & Edge Cases" in a plan file, proactively summarize the identified risk and proposed mitigation directly to the user in the chat. Do not wait for the user to read `.GCC/` files. Explicitly inform the user whether you are applying the mitigation autonomously or if their input/verification is required before proceeding.
+</instruction>
 </step>
 </protocol>
 
@@ -82,7 +82,7 @@ Execute the plan one step at a time. For every single step:
 <trigger>Any package dependency change, design pattern choice, database schema modification, or structural API boundary pivot.</trigger>
 <step id="1">
 <action>
-TOOL INVOCATION: Immediately append the technical choice, alternative options discarded, and concrete technical reasoning inside `.GCC/main.md` under `## 🧠 Decisions Made`. Do not postpone this logging to the end of the session.
+TOOL INVOCATION: Immediately append the technical choice, discarded alternative options, and concrete technical reasoning inside `.GCC/main.md` under `## 🧠 Decisions Made` at the moment the decision is established.
 </action>
 </step>
 </protocol>
@@ -95,22 +95,18 @@ TOOL INVOCATION: Immediately append the technical choice, alternative options di
 <step id="2">
 <action>TOOL INVOCATION: Update `.GCC/main.md` status, archiving completed milestones and updating active targets.</action>
 </step>
-<step id="3" safety="double_key_verification">
-<constraint>
-NEVER unilaterally delete or archive a `.GCC/branches/plan_[name].md` file. 
-Deletion/archiving of a plan file is strictly permitted ONLY if:
-1. All related tasks and bugs are verified as resolved and logged in `.GCC/branches/test.md`.
-2. The user has given explicit written confirmation in the chat.
-</constraint>
+<step id="3" verification="user_confirmation">
+<instruction>
+Maintain plan files in an active state until all related tasks and bugs are verified and logged in `.GCC/branches/test.md`, and the user provides explicit written confirmation in the chat to delete or archive the plan.
+</instruction>
 </step>
-<step id="4" quality="zero_vagueness">
+<step id="4" quality="technical_precision">
 <action>
 TOOL INVOCATION: Overwrite `.GCC/resume.md` with ultra-precise transition details.
 </action>
-<rule>
-Vague, qualitative, or subjective summaries (e.g., "improved the UI", "made the system robust", "aligned logic") are strictly banned. 
-Every entry must be technically descriptive, mentioning specific files, functions, lines of code, and exact terminal commands.
-</rule>
+<instruction>
+Write technically descriptive entries that explicitly detail specific file paths, function signatures, modified line numbers, exact terminal commands, and raw error logs to ensure seamless handoff recovery.
+</instruction>
 </step>
 </protocol>
 
@@ -120,7 +116,7 @@ Every entry must be technically descriptive, mentioning specific files, function
 <action>TOOL INVOCATION: Move completed test scenarios from `.GCC/branches/test_afaire.md` to `.GCC/branches/test.md` with explicit results.</action>
 </step>
 <step id="2">
-<action>TOOL INVOCATION: Append newly discovered bugs, regressions, or integration blocks to `.GCC/branches/test.md` immediately.</action>
+<action>TOOL INVOCATION: Append newly discovered bugs, regressions, or integration blocks to `.GCC/branches/test.md` immediately upon discovery.</action>
 </step>
 </protocol>
 
@@ -189,35 +185,36 @@ Every entry must be technically descriptive, mentioning specific files, function
 - **Risk**: [Identify potential risk, e.g., API rate-limits, dependency clash]
 - **Mitigation**: [Describe fallback behavior]
 
+```
 
 ### 3.3. `.GCC/resume.md` Template
 
 ```markdown
 # Session Handoff
 
+## 🎯 Functional Outcome & Task Reality
+- **Requested Task**: [Brief description of what was asked]
+- **Functional Status**: [SUCCESS | PARTIAL | FAILED]
+- **Behavioral Proof**: [Factual output of runtime test, execution result, or physical check proving whether the feature actually WORKS, independent of compilation]
+
 ## ⚡ Technical Diffs / Atomic Modifications
 - **File**: `[path/to/modified_file_1.ext]`
-- **Scope**: [Added/Modified functions or components, e.g., `getUserData`, `AuthRoute`]
-- **Exact Technical Change**: [Factual, non-vague description of the structural changes made]
-- **File**: `[path/to/modified_file_2.ext]`
-- **Scope**: [Modified components/functions]
+- **Scope**: [Added/Modified functions or components]
 - **Exact Technical Change**: [Factual description of the changes]
 
-## 🛠️ Codebase Health & Compile Status
-- **Verification Command Run**: `[Command used, e.g., npm run build && npm test]`
-- **Status Output**:
-```text
-[Paste clean terminal compiler/test suite output here showing 0 errors, 0 warnings]
-```
+## 🛠️ Static Codebase Health
+- **Verification Command Run**: `[e.g., npm run build && tsc --noEmit]`
+- **Linter/Compiler Status**: [Paste clean terminal output showing 0 errors, 0 warnings]
 
-## 🚧 Unfinished Work & Technical Friction
-- **Blocker / Friction**: [Detail any incomplete task, ongoing debugging state, or specific integration hurdles]
+## 🚧 Unfinished Work & Technical Failures
+- **Blocker / Failure Explanation**: [If Functional Status is PARTIAL or FAILED, explain explicitly WHY it failed, raw error logs, and why static compilation was not enough]
 
 ## 👉 Handover Directives for the Next Agent
-1. **Target File**: `[Specify exact file path to open first, and target line or function name]`
-2. **Immediate Action**: `[Specify the exact code block to write, reference file to use, or command to run]`
-3. **Verification Command**: `[Specific command to run to verify the immediate action succeeds]`
-4. **Precautions**: [Explicitly list edge cases or constraints to monitor during bootstrap]
+1. **Target File**: `[Specify exact file path to open first]`
+2. **Immediate Action**: `[Specify exact next action or fix to apply]`
+3. **Verification Command**: `[Command to run]`
 
 ```
+
+---
 </strict_markdown_templates>
