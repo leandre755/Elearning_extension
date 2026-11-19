@@ -457,23 +457,67 @@ async function handleFetchSerpApi(query, apiKey) {
 /**
  * Fetch an image URL from the background script (no CORS restrictions)
  * and return it as a base64 data URL.
+ * Includes Anti-SSRF validation to block private IPs and non-http(s) protocols.
  */
 async function handleFetchImage(url) {
-  try {
-    console.log(`🖼️ Proxy fetch: ${url.substring(0, 80)}...`);
+  if (typeof url !== 'string' || !url.trim()) {
+    return { success: false, error: 'URL d\'image invalide' };
+  }
 
-    const response = await fetch(url);
+  try {
+    const parsedUrl = new URL(url);
+    const protocol = parsedUrl.protocol.toLowerCase();
+
+    // R-TECH-02 : Validation Anti-SSRF du protocole
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      console.warn(`🛡️ Anti-SSRF: Protocole non autorisé ${protocol}`);
+      return { success: false, error: 'Protocole réseau non autorisé pour les images' };
+    }
+
+    // R-TECH-02 : Validation de l'hôte (Bloquer localhost, IPs privées RFC1918 et AWS/GCP metadata)
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const isPrivateHost =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '169.254.169.254' ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local') ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname) ||
+      /^fe80:/.test(hostname);
+
+    if (isPrivateHost) {
+      console.warn(`🛡️ Anti-SSRF: Tentative d'accès à un hôte privé bloquée (${hostname})`);
+      return { success: false, error: 'Accès aux ressources réseau locales/privées interdit' };
+    }
+
+    console.log(`🖼️ Proxy fetch sécurisé: ${url.substring(0, 80)}...`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout image
+
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
     const blob = await response.blob();
-    const mimeType = blob.type || 'image/jpeg';
+    const mimeType = (blob.type || 'image/jpeg').toLowerCase();
+
+    // R-TECH-02 : Vérifier que la ressource téléchargée est bien une image
+    if (!mimeType.startsWith('image/') && mimeType !== 'application/octet-stream') {
+      console.warn(`🛡️ Anti-SSRF: Type MIME non image rejeté (${mimeType})`);
+      return { success: false, error: 'Le type de fichier récupéré n\'est pas une image' };
+    }
 
     // Convert blob to base64
     const arrayBuffer = await blob.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
-    // P2 — Chunked conversion (avoids O(n²) string concatenation)
     let binary = '';
     const CHUNK_SIZE = 8192;
     for (let i = 0; i < uint8Array.length; i += CHUNK_SIZE) {

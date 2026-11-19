@@ -202,7 +202,7 @@
           50% { transform: translateY(-5px); }
         }
       `;
-      document.head.appendChild(style);
+      (document.head || document.documentElement).appendChild(style);
     }
   }
 
