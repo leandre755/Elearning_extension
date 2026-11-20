@@ -1,7 +1,3 @@
----
-trigger: always_on
----
-
 # Workspace Rules — Coding Agent Entry Point
 
 These rules are **mandatory and always active** for every AI agent operating on this repository.
