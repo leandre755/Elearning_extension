@@ -1039,7 +1039,8 @@
 
   // --- OpenAI / Groq / Mistral / NVIDIA tool calling ---
   async function _callOpenAIWithTools(providerKey, apiKey, model, history, images, tools, signal) {
-    const provider = QuizProviders.PROVIDERS[providerKey];
+    const normalizedKey = String(providerKey).toLowerCase();
+    const provider = QuizProviders.PROVIDERS[normalizedKey];
     const payloadTools = tools.map(t => ({
       type: 'function',
       function: {
@@ -1052,28 +1053,42 @@
     const payload = {
       model: model,
       messages: history.messages,
-      tools: payloadTools,
-      tool_choice: 'auto',
       temperature: 0.3
     };
 
-    // Gérer l'intégration d'images s'il y en a dans le premier message user
-    if (images && images.length > 0 && payload.messages.length > 0 && payload.messages[0].role === 'user') {
-      const originalUserText = typeof payload.messages[0].content === 'string' 
-        ? payload.messages[0].content 
-        : '';
-      const mixedContent = [];
-      images.forEach(img => {
-        const base64Data = img.dataUrl.split(',')[1];
-        const mediaType = img.mimeType || 'image/jpeg';
-        mixedContent.push({
-          type: 'image_url',
-          image_url: { url: `data:${mediaType};base64,${base64Data}` }
-        });
-      });
-      mixedContent.push({ type: 'text', text: originalUserText });
-      payload.messages = JSON.parse(JSON.stringify(payload.messages)); // deep copy
-      payload.messages[0].content = mixedContent;
+    if (payloadTools.length > 0) {
+      payload.tools = payloadTools;
+      payload.tool_choice = 'auto';
+    }
+
+    // Gérer l'intégration d'images dans le premier message user (après un éventuel message system)
+    if (images && images.length > 0 && payload.messages.length > 0) {
+      const firstUserIdx = payload.messages.findIndex(m => m.role === 'user');
+      if (firstUserIdx !== -1) {
+        const originalUserText = typeof payload.messages[firstUserIdx].content === 'string'
+          ? payload.messages[firstUserIdx].content
+          : '';
+        const lowerModel = model.toLowerCase();
+        const isLegacyNvidiaVision = providerKey === 'nvidia' && (lowerModel.includes('phi-') || lowerModel.includes('neva'));
+        payload.messages = JSON.parse(JSON.stringify(payload.messages)); // deep copy
+
+        if (isLegacyNvidiaVision) {
+          const imgTags = images.map(img => `<img src="${img.dataUrl}" />`).join(' ');
+          payload.messages[firstUserIdx].content = `${originalUserText}\n${imgTags}`;
+        } else {
+          const mixedContent = [];
+          images.forEach(img => {
+            const base64Data = img.dataUrl.split(',')[1];
+            const mediaType = img.mimeType || 'image/jpeg';
+            mixedContent.push({
+              type: 'image_url',
+              image_url: { url: `data:${mediaType};base64,${base64Data}` }
+            });
+          });
+          mixedContent.push({ type: 'text', text: originalUserText });
+          payload.messages[firstUserIdx].content = mixedContent;
+        }
+      }
     }
 
     let targetBaseUrl = provider.baseUrl;
@@ -1151,10 +1166,17 @@
     const payload = {
       model: model,
       max_tokens: 4096,
-      messages: messagesToSend,
-      tools: payloadTools,
-      temperature: 0.3
+      messages: messagesToSend
     };
+
+    if (payloadTools.length > 0) {
+      payload.tools = payloadTools;
+    }
+
+    // Opus 5.x et Fable 5.x imposent le thinking adaptatif toujours actif (temperature cause HTTP 400)
+    if (!/claude-(?:opus|fable)-5/.test(model)) {
+      payload.temperature = 0.3;
+    }
 
     if (history.system) {
       payload.system = history.system;
@@ -1227,12 +1249,15 @@
 
     const payload = {
       contents: contentsToSend,
-      tools: [{ functionDeclarations }],
       generationConfig: {
         temperature: 0.3,
         maxOutputTokens: 4096
       }
     };
+
+    if (functionDeclarations.length > 0) {
+      payload.tools = [{ functionDeclarations }];
+    }
 
     if (history.systemInstruction) {
       payload.systemInstruction = {
@@ -1260,7 +1285,7 @@
 
     const responseParts = data.candidates?.[0]?.content?.parts || [];
     for (const part of responseParts) {
-      if (part.text) {
+      if (part.text && part.thought !== true) {
         text += part.text;
       }
       if (part.functionCall) {

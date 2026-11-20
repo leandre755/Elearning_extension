@@ -848,19 +848,19 @@ const QuizProviders = (() => {
       apiKeyField: 'groqApiKey',
       textModels: [
         // Contextes vérifiés depuis console.groq.com/docs/models
-        { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Rapide)', free: true, contextLimit: 131072 },
-        { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (Très rapide)', free: true, contextLimit: 131072 },
-        { id: 'qwen/qwen3-32b', label: 'Qwen 3 32B', free: true, contextLimit: 131072 },
-        { id: 'moonshotai/kimi-k2-instruct-0905', label: 'Kimi k2 Instruct', free: true, contextLimit: 262144 },
+        { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Recommandé)', free: true, contextLimit: 131072 },
+        { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (Ultra rapide)', free: true, contextLimit: 131072 },
+        { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (Raisonnement)', free: true, contextLimit: 131072 },
+        { id: 'meta-models/muse-spark-open', label: 'Muse Spark Open', free: true, contextLimit: 131072 },
+        { id: 'minimaxai/minimax-m2.7', label: 'MiniMax M2.7', free: true, contextLimit: 196608 },
       ],
       visionModels: [
-        // Scout : 128k effectif sur Groq (limite plateforme) ; modèle nativement multimodal
-        { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout 17B Vision', free: true, contextLimit: 131072 },
-        // Maverick : 1M théorique, 131k effectif sur Groq
-        { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', label: 'Llama 4 Maverick 17B', free: true, contextLimit: 131072 },
+        // Qwen 3.8 27B & Muse Spark Open supportent texte + images sur Groq
+        { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B Vision', free: true, contextLimit: 131072 },
+        { id: 'meta-models/muse-spark-open', label: 'Muse Spark Open Vision', free: true, contextLimit: 131072 },
       ],
-      defaultTextModel: 'llama-3.3-70b-versatile',
-      defaultVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      defaultTextModel: 'openai/gpt-oss-120b',
+      defaultVisionModel: 'qwen/qwen3.8-27b',
     },
 
     gemini: {
@@ -870,27 +870,33 @@ const QuizProviders = (() => {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKeyField: 'geminiApiKey',
       textModels: [
-        // Gemini 3.5 / 3.1 / 2.5 et Gemma 4 ouverts gratuits sur l'API Google AI Studio
-        { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (Recommandé)', free: true, contextLimit: 1048576 },
-        { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite', free: true, contextLimit: 1000000 },
-        { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', free: true, contextLimit: 1000000 },
-        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', free: true, contextLimit: 1000000 },
-        { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', free: true, contextLimit: 2000000 },
-        { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', free: true, contextLimit: 1000000 },
+        // Gemini 4 / 3.x et Gemma 4 vérifiés sur ai.google.dev/gemini-api/docs/models & /docs/pricing
+        { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen (Recommandé)', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (Rapide)', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', free: true, contextLimit: 1048576 },
+        { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (Legacy)', free: true, contextLimit: 1000000 },
         { id: 'gemma-4-31b-it', label: 'Gemma 4 31B (Raisonnement)', free: true, contextLimit: 262144 },
-        { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B (Vitesse)', free: true, contextLimit: 262144 },
+        { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B MoE (Vitesse)', free: true, contextLimit: 262144 },
         { id: 'gemma-4-12b-it', label: 'Gemma 4 12B', free: true, contextLimit: 262144 },
         { id: 'gemma-4-e4b-it', label: 'Gemma 4 Edge (4B)', free: true, contextLimit: 131072 },
         { id: 'gemma-4-e2b-it', label: 'Gemma 4 Edge (2B)', free: true, contextLimit: 131072 },
+        { id: 'gemini-4-argon', label: 'Gemini 4 Argon (Payant)', free: false, contextLimit: 1048576 },
+        { id: 'gemini-4-neon', label: 'Gemini 4 Neon (Flagship Payant)', free: false, contextLimit: 1048576 },
+        { id: 'gemini-4-carbon', label: 'Gemini 4 Carbon (Flash Payant)', free: false, contextLimit: 1048576 },
       ],
       visionModels: [
-        { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (Vision)', free: true, contextLimit: 1048576 },
-        { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite (Vision)', free: true, contextLimit: 1000000 },
-        { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Vision)', free: true, contextLimit: 1000000 },
-        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Vision)', free: true, contextLimit: 1000000 },
+        { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'gemma-4-31b-it', label: 'Gemma 4 31B (Vision)', free: true, contextLimit: 262144 },
+        { id: 'gemini-4-argon', label: 'Gemini 4 Argon (Vision Payant)', free: false, contextLimit: 1048576 },
+        { id: 'gemini-4-neon', label: 'Gemini 4 Neon (Vision Payant)', free: false, contextLimit: 1048576 },
       ],
-      defaultTextModel: 'gemma-4-26b-a4b-it',
-      defaultVisionModel: 'gemini-3.5-flash',
+      defaultTextModel: 'gemini-4-hydrogen',
+      defaultVisionModel: 'gemini-4-hydrogen',
     },
 
     nvidia: {
@@ -900,19 +906,27 @@ const QuizProviders = (() => {
       baseUrl: 'https://integrate.api.nvidia.com/v1',
       apiKeyField: 'nvidiaApiKey',
       textModels: [
-        // Crédits développeur build.nvidia.com gratuits en permanence pour prototypage
-        { id: 'moonshotai/kimi-k2.5', label: 'Kimi k2.5 (Thinking)', free: true, contextLimit: 256000 },
-        { id: 'minimaxai/minimax-m2.5', label: 'MiniMax m2.5', free: true, contextLimit: 196608 },
-        { id: 'deepseek-ai/deepseek-v3.2', label: 'DeepSeek v3.2', free: true, contextLimit: 128000 },
-        { id: 'mistralai/devstral-2-123b-instruct-2512', label: 'Mistral Devstral', free: true, contextLimit: 256000 },
+        // Catalogue live vérifié sur integrate.api.nvidia.com/v1/models (crédits gratuits build.nvidia.com)
+        { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi k3.1 Pro (Thinking)', free: true, contextLimit: 1048576 },
+        { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', label: 'Nemotron 3.5 Super 120B', free: true, contextLimit: 1048576 },
+        { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', label: 'Nemotron 3.5 Lightning 30B (Rapide)', free: true, contextLimit: 1048576 },
+        { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra 550B', free: true, contextLimit: 1048576 },
+        { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4', free: true, contextLimit: 1048576 },
+        { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', free: true, contextLimit: 1048576 },
+        { id: 'minimaxai/minimax-m3.1-flash', label: 'MiniMax M3.1 Flash', free: true, contextLimit: 1048576 },
+        { id: 'google/gemma-4-31b-it', label: 'Gemma 4 31B', free: true, contextLimit: 262144 },
+        { id: 'stepfun-ai/step-5-preview', label: 'Step 5 Preview', free: true, contextLimit: 1048576 },
       ],
       visionModels: [
-        // Phi-3.5 Vision : 128k tokens (contexte Microsoft officiel)
-        { id: 'microsoft/phi-3.5-vision-instruct', label: 'Phi-3.5 Vision', free: true, contextLimit: 128000 },
-        { id: 'moonshotai/kimi-k2.5', label: 'Kimi k2.5 Vision', free: true, contextLimit: 256000 },
+        { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', label: 'Nemotron 3.5 Super VL (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi k3.1 Pro (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4 (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'minimaxai/minimax-m3.1-flash', label: 'MiniMax M3.1 Flash (Vision)', free: true, contextLimit: 1048576 },
+        { id: 'google/gemma-4-31b-it', label: 'Gemma 4 31B (Vision)', free: true, contextLimit: 262144 },
       ],
-      defaultTextModel: 'moonshotai/kimi-k2.5',
-      defaultVisionModel: 'microsoft/phi-3.5-vision-instruct',
+      defaultTextModel: 'moonshotai/kimi-k3.1-pro',
+      defaultVisionModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
     },
 
     mistral: {
@@ -923,12 +937,12 @@ const QuizProviders = (() => {
       apiKeyField: 'mistralApiKey',
       textModels: [
         { id: 'mistral-small-latest', label: 'Mistral Small 4 (Rapide)', free: false, contextLimit: 256000 },
-        { id: 'mistral-large-latest', label: 'Mistral Large 3 (Flagship)', free: false, contextLimit: 262144 },
-        { id: 'codestral-latest', label: 'Codestral (Code & FIM)', free: false, contextLimit: 262144 },
+        { id: 'mistral-large-latest', label: 'Mistral Large 4 (Flagship)', free: false, contextLimit: 1000000 },
+        { id: 'codestral-latest', label: 'Codestral (Code & FIM)', free: false, contextLimit: 131072 },
       ],
       visionModels: [
         { id: 'mistral-small-latest', label: 'Mistral Small 4 Vision', free: false, contextLimit: 256000 },
-        { id: 'mistral-large-latest', label: 'Mistral Large 3 Vision', free: false, contextLimit: 262144 },
+        { id: 'mistral-large-latest', label: 'Mistral Large 4 Vision', free: false, contextLimit: 1000000 },
       ],
       defaultTextModel: 'mistral-small-latest',
       defaultVisionModel: 'mistral-small-latest',
@@ -941,19 +955,19 @@ const QuizProviders = (() => {
       baseUrl: 'https://api.anthropic.com/v1',
       apiKeyField: 'claudeApiKey',
       textModels: [
-        { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 (Recommandé)', free: false, contextLimit: 1000000 },
-        { id: 'claude-fable-5', label: 'Claude Fable 5 (Raisonnement)', free: false, contextLimit: 1000000 },
-        { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 (Flagship)', free: false, contextLimit: 1000000 },
-        { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Legacy)', free: false, contextLimit: 200000 },
+        { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (Recommandé)', free: false, contextLimit: 1000000 },
+        { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (Flagship)', free: false, contextLimit: 1000000 },
+        { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (Rapide)', free: false, contextLimit: 1000000 },
+        { id: 'claude-fable-5-2', label: 'Claude Fable 5.2 (Raisonnement)', free: false, contextLimit: 1000000 },
       ],
       visionModels: [
-        { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 Vision', free: false, contextLimit: 1000000 },
-        { id: 'claude-fable-5', label: 'Claude Fable 5 Vision', free: false, contextLimit: 1000000 },
-        { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 Vision', free: false, contextLimit: 1000000 },
-        { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet Vision', free: false, contextLimit: 200000 },
+        { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 Vision', free: false, contextLimit: 1000000 },
+        { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 Vision', free: false, contextLimit: 1000000 },
+        { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 Vision', free: false, contextLimit: 1000000 },
+        { id: 'claude-fable-5-2', label: 'Claude Fable 5.2 Vision', free: false, contextLimit: 1000000 },
       ],
-      defaultTextModel: 'claude-sonnet-5',
-      defaultVisionModel: 'claude-sonnet-5',
+      defaultTextModel: 'claude-sonnet-5-5',
+      defaultVisionModel: 'claude-sonnet-5-5',
     },
   };
 
@@ -1057,13 +1071,15 @@ const QuizProviders = (() => {
       throw new Error('L\'argument hasImages doit être un booléen.');
     }
 
-    const provider = PROVIDERS[providerKey];
+    const normalizedKey = providerKey.toLowerCase();
+    const provider = PROVIDERS[normalizedKey];
     if (!provider) throw new Error(`Provider inconnu: ${providerKey}`);
 
+    const nestedOverride = overrides?.[normalizedKey];
     if (hasImages) {
-      return overrides[`${providerKey}_visionModel`] || provider.defaultVisionModel;
+      return nestedOverride?.vision || overrides?.[`${normalizedKey}_visionModel`] || provider.defaultVisionModel;
     }
-    return overrides[`${providerKey}_textModel`] || provider.defaultTextModel;
+    return nestedOverride?.text || overrides?.[`${normalizedKey}_textModel`] || provider.defaultTextModel;
   }
 
   // ──────────────────────────────────────────────
@@ -1321,13 +1337,16 @@ const QuizProviders = (() => {
    * Call any OpenAI-compatible endpoint (Groq, NVIDIA, Fireworks, Mistral)
    */
   async function callOpenAICompatible(providerKey, apiKey, model, prompt, images = [], extraConfig = {}) {
-    const provider = PROVIDERS[providerKey];
+    const normalizedKey = String(providerKey).toLowerCase();
+    const provider = PROVIDERS[normalizedKey];
+    if (!provider) throw new Error(`Provider inconnu: ${providerKey}`);
     let messages;
     let extraBodyParams = {};
 
-    // Specific formatting for NVIDIA Vision (all NV vision models prefer this)
-    const isNvidia = providerKey === 'nvidia';
-    if (isNvidia && images.length > 0) {
+    const lowerModel = model.toLowerCase();
+    // Les modèles legacy NeVA/Phi sur NVIDIA NIM attendent <img src="..."> ; les VLM récents utilisent image_url standard
+    const isLegacyNvidiaVision = normalizedKey === 'nvidia' && (lowerModel.includes('phi-') || lowerModel.includes('neva'));
+    if (isLegacyNvidiaVision && images.length > 0) {
       const systemPrompt = (typeof prompt === 'object' && prompt.system) ? prompt.system : null;
       const userPrompt = (typeof prompt === 'object' && prompt.user) ? prompt.user : (typeof prompt === 'string' ? prompt : '');
       const imgTags = images.map(img => `<img src="${img.dataUrl}" />`).join(' ');
@@ -1344,42 +1363,52 @@ const QuizProviders = (() => {
       messages = buildOpenAIMessages(prompt, images);
     }
 
+    const isGroqReasoningModel = /gpt-oss|qwen3|muse-spark|minimax|kimi|deepseek|reasoning/.test(lowerModel);
+    const isNvidiaReasoningModel = /kimi|nemotron|deepseek|mistral-large|glm-5|minimax|step-5|reasoning/.test(lowerModel);
+
     // Configuration du thinking pour les providers OpenAI-compatibles
     if (extraConfig.thinking?.enabled) {
-      if (providerKey === 'groq') {
-        // Groq en 2026 supporte include_reasoning et reasoning_format: 'parsed'
-        extraBodyParams.include_reasoning = true;
-        extraBodyParams.reasoning_format = 'parsed';
-        extraBodyParams.reasoning_effort = extraConfig.thinking.effort || 'high';
-      } else if (providerKey === 'nvidia') {
-        // NVIDIA NIM requiert chat_template_kwargs pour activer le thinking sur les modèles de raisonnement
-        extraBodyParams.chat_template_kwargs = { enable_thinking: true, thinking: true };
-        extraBodyParams.reasoning_effort = extraConfig.thinking.effort || 'high';
+      if (normalizedKey === 'groq') {
+        if (isGroqReasoningModel) {
+          // reasoning_format et include_reasoning sont mutuellement exclusifs sur Groq
+          extraBodyParams.reasoning_format = 'parsed';
+          extraBodyParams.reasoning_effort = extraConfig.thinking.effort || 'high';
+        }
+      } else if (normalizedKey === 'nvidia') {
+        if (isNvidiaReasoningModel) {
+          // NVIDIA NIM requiert chat_template_kwargs pour activer le thinking sur les modèles de raisonnement
+          extraBodyParams.chat_template_kwargs = { enable_thinking: true, thinking: true };
+          extraBodyParams.reasoning_effort = extraConfig.thinking.effort || 'high';
+        }
       } else {
-        // Paramètre de raisonnement générique OpenAI (ex: o1, o3-mini, deepseek, etc.)
-        const lowerModel = model.toLowerCase();
+        // Paramètre de raisonnement générique OpenAI / Mistral
         const isReasoningModel = lowerModel.includes('kimi') ||
           lowerModel.includes('deepseek') ||
-          lowerModel.includes('scout') ||
-          lowerModel.includes('maverick') ||
+          lowerModel.includes('nemotron') ||
+          lowerModel.includes('gpt-oss') ||
+          lowerModel.includes('qwen3') ||
+          lowerModel.includes('mistral-large') ||
+          lowerModel.includes('mistral-small') ||
+          lowerModel.includes('magistral') ||
+          lowerModel.includes('glm-5') ||
+          lowerModel.includes('minimax-m3') ||
+          lowerModel.includes('step-5') ||
           lowerModel.includes('devstral') ||
           lowerModel.includes('reasoning');
         if (isReasoningModel) {
           extraBodyParams.reasoning_effort = extraConfig.thinking.effort || 'high';
         }
       }
-    } else {
-      if (providerKey === 'groq') {
-        extraBodyParams.include_reasoning = false;
-      }
+    } else if (normalizedKey === 'groq' && isGroqReasoningModel) {
+      extraBodyParams.reasoning_format = 'hidden';
     }
 
     console.log(`🔗 [${provider.name}] Appel ${model}...`);
 
     // Adjust token limit: Vision models (like Phi) often have lower output limits than reasoning models
     let defaultMaxTokens = 4096;
-    if (providerKey === 'nvidia') {
-      defaultMaxTokens = (model.includes('phi')) ? 4096 : 16384;
+    if (normalizedKey === 'nvidia') {
+      defaultMaxTokens = lowerModel.includes('phi') ? 4096 : 16384;
     }
 
     const payload = {
@@ -1393,7 +1422,7 @@ const QuizProviders = (() => {
 
     // Routage vers l'endpoint personnalisé pour Codestral si requis
     let targetBaseUrl = provider ? provider.baseUrl : '';
-    if (providerKey === 'mistral' && model.toLowerCase().includes('codestral')) {
+    if (normalizedKey === 'mistral' && lowerModel.includes('codestral')) {
       targetBaseUrl = 'https://codestral.mistral.ai/v1';
       console.log(`✨ Redirection transparente de Codestral vers son endpoint personnalisé : ${targetBaseUrl}`);
     }
@@ -1424,7 +1453,7 @@ const QuizProviders = (() => {
 
     const choice = data.choices?.[0];
     let outputText = choice?.message?.content || '';
-    let thinkingText = choice?.message?.reasoning_content || '';
+    let thinkingText = choice?.message?.reasoning_content || choice?.message?.reasoning || '';
 
     // Extraction robuste en cas de balisage <think>...</think> dans le texte de réponse brute (ex: DeepSeek-R1)
     if (outputText.includes('<think>')) {
@@ -1479,33 +1508,36 @@ const QuizProviders = (() => {
       requestBody.system = systemPrompt;
     }
 
-    // Détection de la génération du modèle Claude (Claude 5+ ou Opus 4.8+)
-    const isClaude5OrOpus48 = model.includes('claude-sonnet-5') ||
-      model.includes('claude-fable-5') ||
-      model.includes('claude-opus-4-8');
+    // Détection de la génération du modèle Claude (Claude 5+ ou Opus 4.6/4.7/4.8 : adaptive thinking)
+    const isAdaptiveClaude = /claude-(?:opus|sonnet|haiku|fable)-5|claude-opus-4-[678]/.test(model);
+    // Opus 5.5 et Fable 5.x imposent le thinking adaptatif toujours actif (passer temperature provoque HTTP 400)
+    const isAlwaysOnThinkingClaude = /claude-(?:opus|fable)-5/.test(model);
 
-    if (thinkingConfig?.enabled) {
-      if (isClaude5OrOpus48) {
-        // En 2026, Claude 5+ utilise le mode adaptive thinking avec effort dans output_config
-        requestBody.thinking = {
-          type: 'adaptive',
-          display: 'summarized' // Permet d'obtenir le flux de pensée dans le stream/JSON
-        };
-        requestBody.output_config = {
-          effort: thinkingConfig.effort || 'high'
-        };
+    if (thinkingConfig?.enabled || isAlwaysOnThinkingClaude) {
+      if (isAdaptiveClaude) {
+        if (thinkingConfig?.enabled) {
+          requestBody.thinking = {
+            type: 'adaptive',
+            display: 'summarized' // Permet d'obtenir le flux de pensée dans le stream/JSON
+          };
+          requestBody.output_config = {
+            effort: thinkingConfig.effort || 'high'
+          };
+        }
         // CRITICAL : la température et l'échantillonnage ne doivent pas être définis avec le thinking actif
-        // (ils causeraient une erreur 400 s'ils étaient passés en arguments).
+        // (ils causeraient une erreur 400 sur adaptive / always-on thinking).
       } else {
-        // Fallback legacy pour les modèles plus anciens comme Claude 3.5 Sonnet
+        // Fallback legacy pour les modèles plus anciens comme Claude 3.5 Sonnet (max_tokens doit dépasser budget_tokens)
+        const budgetTokens = thinkingConfig.depth ?? 10000;
+        requestBody.max_tokens = Math.max(maxTokens, budgetTokens + 1024);
         requestBody.thinking = {
           type: 'enabled',
-          budget_tokens: thinkingConfig.depth || 10000
+          budget_tokens: budgetTokens
         };
         requestBody.temperature = 1.0; // Spécification Anthropic pour le mode thinking legacy
       }
     } else {
-      // Mode standard (sans thinking)
+      // Mode standard (sans thinking sur modèles non always-on)
       requestBody.temperature = 0.3;
     }
 
@@ -1588,21 +1620,21 @@ const QuizProviders = (() => {
       topK: 40
     };
 
-    // Détection de la génération du modèle Gemini (Gemini 3+ et Gemma 4)
-    const isGemini3PlusOrGemma4 = model.includes('gemini-3') || model.includes('gemma-4');
+    // Détection de la génération du modèle Gemini (Gemini 3, Gemini 4 et Gemma 4)
+    const isGemini3PlusOrGemma4 = /gemini-[34]|gemma-4/i.test(model);
 
     // Add thinking configuration if enabled
     if (thinkingConfig?.enabled) {
       if (isGemini3PlusOrGemma4) {
-        // En 2026, Gemini 3+ utilise thinkingLevel
+        // Gemini 3+ et Gemini 4 utilisent thinkingLevel (incompatible avec thinkingBudget)
         generationConfig.thinkingConfig = {
           thinkingLevel: thinkingConfig.level || 'HIGH'
         };
       } else {
-        // Gemini 2.5 utilise thinkingBudget
+        // Gemini 2.5 utilise thinkingBudget (depth = 0 désactive explicitement le thinking)
         generationConfig.thinkingConfig = {
-          includeThoughts: true,
-          thinkingBudget: thinkingConfig.depth || -1
+          includeThoughts: (thinkingConfig.depth ?? -1) !== 0,
+          thinkingBudget: thinkingConfig.depth ?? -1
         };
       }
     }
@@ -1685,7 +1717,7 @@ const QuizProviders = (() => {
       let result;
       switch (provider.type) {
         case 'openai-compatible':
-          result = await callOpenAICompatible(providerKey, apiKey, model, prompt, images, extraConfig);
+          result = await callOpenAICompatible(normalizedKey, apiKey, model, prompt, images, extraConfig);
           break;
         case 'claude':
           result = await callClaudeProvider(apiKey, model, prompt, images, extraConfig.maxTokens, extraConfig.thinking, extraConfig);

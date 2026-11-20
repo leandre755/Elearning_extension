@@ -68,8 +68,8 @@
       selectedProvider: 'gemini',
       customModels: {
         gemini: {
-          text: 'gemini-3.1-flash-lite-preview',
-          vision: 'gemini-3.5-flash'
+          text: 'gemini-3.1-flash-lite',
+          vision: 'gemini-4-hydrogen'
         }
       }
     },
