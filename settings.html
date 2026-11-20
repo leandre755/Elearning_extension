@@ -203,13 +203,13 @@
           </div>
 
           <div class="setting-item">
-            <label>Fichiers joints (.txt, .md, .pdf, .docx)</label>
+            <label>Fichiers joints (.pdf, .docx, .txt, .md, .html, .csv)</label>
             <div class="file-upload-area" id="fileUploadArea">
-              <input type="file" id="fileInput" multiple accept=".txt,.pdf,.doc,.docx,.md">
+              <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.csv">
               <div class="file-upload-content">
                 <span class="upload-icon">📁</span>
                 <p class="upload-title">Glissez vos fichiers ou cliquez ici</p>
-                <p class="help-text">Formats : Texte brut, Markdown, PDF, Word</p>
+                <p class="help-text">Formats : PDF, Word (.docx), Texte (.txt), Markdown (.md), HTML (.html/.htm), CSV (.csv)</p>
               </div>
             </div>
             <div id="fileList" class="file-list"></div>
@@ -306,6 +306,48 @@
             <p class="help-text">Raccourci système alternatif : Ctrl+Shift+3</p>
           </div>
         </section>
+
+        <!-- Règles de Domaine (F-INT-03) -->
+        <section class="settings-card">
+          <h2>🎓 Domaine du Quiz &amp; Règles Métier</h2>
+          <p class="section-description">Adaptez le raisonnement de l'IA à la discipline du quiz ou ajoutez vos propres consignes.</p>
+
+          <div class="setting-item">
+            <label for="domainPreset">Domaine cible</label>
+            <select id="domainPreset">
+              <option value="auto">🤖 Détection automatique (Recommandé)</option>
+              <option value="general">📚 Général</option>
+              <option value="law">⚖️ Droit</option>
+              <option value="medicine">🩺 Médecine / Santé</option>
+              <option value="cs">💻 Informatique / Tech</option>
+              <option value="math">📐 Mathématiques / Sciences</option>
+            </select>
+          </div>
+
+          <div class="setting-item">
+            <label for="customDomainRules">Règles personnalisées du domaine</label>
+            <textarea id="customDomainRules" rows="3" placeholder="Ex: Toujours vérifier la juridiction applicable et citer les articles de loi pertinents..."></textarea>
+          </div>
+        </section>
+
+        <!-- Validation Croisée (F-INT-04) -->
+        <section class="settings-card">
+          <h2>🔍 Validation Croisée Multi-Modèles</h2>
+          <p class="section-description">Sollicite un second fournisseur distinct et/ou une recherche web lorsque le score de confiance initial est inférieur au seuil.</p>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="crossValidationEnabled">
+              Activer la validation croisée automatique
+            </label>
+          </div>
+
+          <div class="setting-item slider-row" id="crossValidationOptionsRow">
+            <label for="crossValidationThreshold">Seuil de déclenchement</label>
+            <input type="range" id="crossValidationThreshold" min="50" max="90" step="5" value="70">
+            <span class="slider-value" id="crossValidationThresholdDisplay">70 %</span>
+          </div>
+        </section>
       </div>
 
       <!-- ========================================================= -->
@@ -338,6 +380,51 @@
             <input type="text" id="customAnswerSelector" placeholder="Ex: .answer-option, .option">
           </div>
         </section>
+
+        <!-- Soumission Automatique (F-AUTO-03 — Opt-in / Caution) -->
+        <section class="settings-card settings-card-caution">
+          <h2>⚡ Soumission Automatique (Opt-in) <span class="caution-badge">Prudence</span></h2>
+          <p class="section-description">Remplit et soumet automatiquement les réponses dépassant le seuil de confiance. Désactivé par défaut.</p>
+
+          <div class="caution-banner" role="note">
+            ⚠️ <strong>Option expérimentale :</strong> n'activez l'Auto-Submit que si vous acceptez le risque de soumission autonome. Le Panic Button (<code>Ctrl+Shift+E</code>) annule immédiatement toute action en cours.
+          </div>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoSubmitEnabled">
+              Activer la soumission automatique (opt-in)
+            </label>
+          </div>
+
+          <div id="autoSubmitOptionsGroup">
+            <div class="setting-item slider-row">
+              <label for="autoSubmitMinConfidence">Confiance minimale requise</label>
+              <input type="range" id="autoSubmitMinConfidence" min="70" max="99" step="1" value="85">
+              <span class="slider-value" id="autoSubmitMinConfidenceDisplay">85 %</span>
+            </div>
+
+            <div class="setting-item slider-row">
+              <label for="autoSubmitDelayMs">Délai humain avant soumission</label>
+              <input type="range" id="autoSubmitDelayMs" min="800" max="5000" step="100" value="1500">
+              <span class="slider-value" id="autoSubmitDelayMsDisplay">1500 ms</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Interception Réseau Passive (F-DET-04 — Opt-in) -->
+        <section class="settings-card">
+          <h2>🌐 Interception Réseau Passive (Opt-in)</h2>
+          <p class="section-description">Capture passivement les données structurées de quiz issues des requêtes Fetch/XHR dans un tampon circulaire borné en mémoire.</p>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="passiveNetworkIntercept">
+              Activer l'interception réseau passive Fetch/XHR (opt-in)
+            </label>
+            <p class="help-text">Désactivé par défaut. Aucune requête n'est modifiée ni bloquée ; les données restent exclusivement en mémoire locale.</p>
+          </div>
+        </section>
       </div>
     </main>
 
@@ -351,6 +438,7 @@
 
   <script src="providers.js"></script>
   <script src="schema-cache.js"></script>
+  <script src="nlp-cleaner.js"></script>
   <script src="lib/pdf.min.js"></script>
   <script src="lib/mammoth.browser.min.js"></script>
   <script src="settings.js"></script>

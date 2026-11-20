@@ -44,8 +44,45 @@ const elements = {
   discretionSlider: document.getElementById('discretionSlider'),
   highlightPreviewElement: document.getElementById('highlightPreviewElement'),
   discretionDescription: document.getElementById('discretionDescription'),
-  colorCustomizerRow: document.getElementById('colorCustomizerRow')
+  colorCustomizerRow: document.getElementById('colorCustomizerRow'),
+
+  // Wave 1 / Wave 2 settings (local storage)
+  domainPreset: document.getElementById('domainPreset'),
+  customDomainRules: document.getElementById('customDomainRules'),
+  crossValidationEnabled: document.getElementById('crossValidationEnabled'),
+  crossValidationThreshold: document.getElementById('crossValidationThreshold'),
+  crossValidationThresholdDisplay: document.getElementById('crossValidationThresholdDisplay'),
+  crossValidationOptionsRow: document.getElementById('crossValidationOptionsRow'),
+  autoSubmitEnabled: document.getElementById('autoSubmitEnabled'),
+  autoSubmitMinConfidence: document.getElementById('autoSubmitMinConfidence'),
+  autoSubmitMinConfidenceDisplay: document.getElementById('autoSubmitMinConfidenceDisplay'),
+  autoSubmitDelayMs: document.getElementById('autoSubmitDelayMs'),
+  autoSubmitDelayMsDisplay: document.getElementById('autoSubmitDelayMsDisplay'),
+  autoSubmitOptionsGroup: document.getElementById('autoSubmitOptionsGroup'),
+  passiveNetworkIntercept: document.getElementById('passiveNetworkIntercept')
 };
+
+const ALLOWED_DOMAIN_PRESETS = new Set(['auto', 'general', 'law', 'medicine', 'cs', 'math']);
+const DEFAULT_BEHAVIOR_SETTINGS = Object.freeze({
+  domainPreset: 'auto',
+  customDomainRules: '',
+  crossValidationEnabled: false,
+  crossValidationThreshold: 70,
+  autoSubmitEnabled: false,
+  autoSubmitMinConfidence: 85,
+  autoSubmitDelayMs: 1500,
+  passiveNetworkIntercept: false
+});
+
+function clampInt(value, min, max, fallback) {
+  const num = parseInt(value, 10);
+  if (Number.isNaN(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
+}
+
+function normalizeDomainPreset(value) {
+  return ALLOWED_DOMAIN_PRESETS.has(value) ? value : DEFAULT_BEHAVIOR_SETTINGS.domainPreset;
+}
 
 // État local
 let uploadedFiles = [];
@@ -133,11 +170,15 @@ async function loadSettings() {
     'highlightDiscretion'
   ]);
 
-  // S1 — API keys are stored in local storage
+  // S1 — API keys + behavior options are stored in local storage
   const localSettings = await chrome.storage.local.get([
     'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
     'mistralApiKey', 'claudeApiKey',
-    'serpApiKey', 'contextFiles'
+    'serpApiKey', 'contextFiles',
+    'domainPreset', 'customDomainRules',
+    'crossValidationEnabled', 'crossValidationThreshold',
+    'autoSubmitEnabled', 'autoSubmitMinConfidence', 'autoSubmitDelayMs',
+    'passiveNetworkIntercept'
   ]);
 
   // Appliquer les valeurs (Clés API — local storage)
@@ -186,6 +227,80 @@ async function loadSettings() {
   if (localSettings.contextFiles) {
     uploadedFiles = localSettings.contextFiles;
     renderFileList();
+  }
+
+  // Wave 1 / Wave 2 settings (local storage, safe defaults)
+  if (elements.domainPreset) {
+    elements.domainPreset.value = normalizeDomainPreset(localSettings.domainPreset);
+  }
+  if (elements.customDomainRules) {
+    elements.customDomainRules.value = typeof localSettings.customDomainRules === 'string'
+      ? localSettings.customDomainRules
+      : DEFAULT_BEHAVIOR_SETTINGS.customDomainRules;
+  }
+  if (elements.crossValidationEnabled) {
+    elements.crossValidationEnabled.checked = localSettings.crossValidationEnabled === true;
+  }
+  const cvThreshold = clampInt(
+    localSettings.crossValidationThreshold,
+    50,
+    90,
+    DEFAULT_BEHAVIOR_SETTINGS.crossValidationThreshold
+  );
+  if (elements.crossValidationThreshold) {
+    elements.crossValidationThreshold.value = cvThreshold;
+  }
+  if (elements.crossValidationThresholdDisplay) {
+    elements.crossValidationThresholdDisplay.textContent = `${cvThreshold} %`;
+  }
+
+  if (elements.autoSubmitEnabled) {
+    elements.autoSubmitEnabled.checked = localSettings.autoSubmitEnabled === true;
+  }
+  const autoMinConf = clampInt(
+    localSettings.autoSubmitMinConfidence,
+    70,
+    99,
+    DEFAULT_BEHAVIOR_SETTINGS.autoSubmitMinConfidence
+  );
+  if (elements.autoSubmitMinConfidence) {
+    elements.autoSubmitMinConfidence.value = autoMinConf;
+  }
+  if (elements.autoSubmitMinConfidenceDisplay) {
+    elements.autoSubmitMinConfidenceDisplay.textContent = `${autoMinConf} %`;
+  }
+  const autoDelayMs = clampInt(
+    localSettings.autoSubmitDelayMs,
+    800,
+    5000,
+    DEFAULT_BEHAVIOR_SETTINGS.autoSubmitDelayMs
+  );
+  if (elements.autoSubmitDelayMs) {
+    elements.autoSubmitDelayMs.value = autoDelayMs;
+  }
+  if (elements.autoSubmitDelayMsDisplay) {
+    elements.autoSubmitDelayMsDisplay.textContent = `${autoDelayMs} ms`;
+  }
+
+  if (elements.passiveNetworkIntercept) {
+    elements.passiveNetworkIntercept.checked = localSettings.passiveNetworkIntercept === true;
+  }
+
+  updateBehaviorDependenciesUI();
+}
+
+function updateBehaviorDependenciesUI() {
+  if (elements.crossValidationOptionsRow && elements.crossValidationEnabled) {
+    elements.crossValidationOptionsRow.classList.toggle(
+      'sub-settings-muted',
+      !elements.crossValidationEnabled.checked
+    );
+  }
+  if (elements.autoSubmitOptionsGroup && elements.autoSubmitEnabled) {
+    elements.autoSubmitOptionsGroup.classList.toggle(
+      'sub-settings-muted',
+      !elements.autoSubmitEnabled.checked
+    );
   }
 }
 
@@ -405,6 +520,29 @@ function setupEventListeners() {
     elements.imageQualityDisplay.textContent = e.target.value;
   });
 
+  // Sliders et toggles Wave 1 / Wave 2
+  if (elements.crossValidationEnabled) {
+    elements.crossValidationEnabled.addEventListener('change', updateBehaviorDependenciesUI);
+  }
+  if (elements.crossValidationThreshold && elements.crossValidationThresholdDisplay) {
+    elements.crossValidationThreshold.addEventListener('input', (e) => {
+      elements.crossValidationThresholdDisplay.textContent = `${e.target.value} %`;
+    });
+  }
+  if (elements.autoSubmitEnabled) {
+    elements.autoSubmitEnabled.addEventListener('change', updateBehaviorDependenciesUI);
+  }
+  if (elements.autoSubmitMinConfidence && elements.autoSubmitMinConfidenceDisplay) {
+    elements.autoSubmitMinConfidence.addEventListener('input', (e) => {
+      elements.autoSubmitMinConfidenceDisplay.textContent = `${e.target.value} %`;
+    });
+  }
+  if (elements.autoSubmitDelayMs && elements.autoSubmitDelayMsDisplay) {
+    elements.autoSubmitDelayMs.addEventListener('input', (e) => {
+      elements.autoSubmitDelayMsDisplay.textContent = `${e.target.value} ms`;
+    });
+  }
+
   elements.fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
   elements.saveBtn.addEventListener('click', saveSettings);
   elements.resetBtn.addEventListener('click', resetSettings);
@@ -476,15 +614,19 @@ async function testProvider(id, btn) {
 async function handleFiles(files) {
   for (const file of files) {
     try {
-      const content = await readFileContent(file);
+      const { text: content, stats } = await readFileWithStats(file);
       if (content && content.trim().length > 0) {
         uploadedFiles.push({
           name: file.name,
           content: content,
           size: file.size,
-          type: file.type
+          type: file.type,
+          nlpStats: stats || null
         });
-        showStatus(`✅ Fichier ajouté : ${file.name}`, 'success');
+        const pct = stats && stats.reductionRatio > 0
+          ? ` (-${Math.round(stats.reductionRatio * 100)}% bruit)`
+          : '';
+        showStatus(`✅ Fichier ajouté : ${file.name}${pct}`, 'success');
       } else {
         showStatus(`⚠️ Fichier vide ou illisible : ${file.name}`, 'error');
       }
@@ -496,25 +638,68 @@ async function handleFiles(files) {
   renderFileList();
 }
 
-async function readFileContent(file) {
-  const extension = file.name.split('.').pop().toLowerCase();
+function readTextFileUTF8(file) {
+  if (typeof file.text === 'function') {
+    return file.text();
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(typeof e.target.result === 'string' ? e.target.result : '');
+    reader.onerror = reject;
+    reader.readAsText(file, 'UTF-8');
+  });
+}
+
+async function readFileWithStats(file) {
+  const extension = (file.name.split('.').pop() || '').toLowerCase();
+  const cleaner = globalThis.NLPCleaner;
+  let rawText = '';
 
   if (extension === 'pdf') {
-    return await extractTextFromPDF(file);
+    rawText = await extractTextFromPDF(file);
   } else if (extension === 'docx') {
-    return await extractTextFromDOCX(file);
+    rawText = await extractTextFromDOCX(file);
   } else {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = reject;
-      reader.readAsText(file);
+    rawText = await readTextFileUTF8(file);
+    if (extension === 'html' || extension === 'htm') {
+      rawText = cleaner && typeof cleaner.extractTextFromHTML === 'function'
+        ? cleaner.extractTextFromHTML(rawText)
+        : rawText.replace(/<[^>]+>/g, ' ');
+    } else if (extension === 'csv') {
+      rawText = cleaner && typeof cleaner.parseCSV === 'function'
+        ? cleaner.parseCSV(rawText)
+        : rawText;
+    }
+  }
+
+  if (cleaner && typeof cleaner.cleanText === 'function') {
+    const isFlatTabular = extension === 'csv';
+    return cleaner.cleanText(rawText, {
+      dehyphenate: !isFlatTabular,
+      stripPagination: !isFlatTabular
     });
   }
+
+  return {
+    text: rawText,
+    stats: {
+      originalChars: rawText.length,
+      cleanedChars: rawText.length,
+      removedLines: 0,
+      reductionRatio: 0
+    }
+  };
+}
+
+async function readFileContent(file) {
+  const result = await readFileWithStats(file);
+  return result.text;
 }
 
 // Extraction PDF via PDF.js
 async function extractTextFromPDF(file) {
+  let loadingTask = null;
+  let pdf = null;
   try {
     const arrayBuffer = await file.arrayBuffer();
 
@@ -524,20 +709,63 @@ async function extractTextFromPDF(file) {
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
 
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    pdf = await loadingTask.promise;
     let fullText = '';
 
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map(item => item.str).join(' ');
-      fullText += pageText + '\n';
+      try {
+        const textContent = await page.getTextContent();
+        let pageText = '';
+        let prevY = null;
+
+        for (const item of textContent.items) {
+          const str = item.str || '';
+          const y = Array.isArray(item.transform) ? item.transform[5] : null;
+          if (
+            pageText.length > 0 &&
+            !pageText.endsWith('\n') &&
+            prevY !== null &&
+            y !== null &&
+            Math.abs(y - prevY) > 2
+          ) {
+            pageText += '\n';
+          } else if (
+            pageText.length > 0 &&
+            !pageText.endsWith('\n') &&
+            !pageText.endsWith(' ') &&
+            !str.startsWith(' ')
+          ) {
+            pageText += ' ';
+          }
+          pageText += str;
+          if (item.hasEOL) {
+            pageText += '\n';
+          }
+          if (y !== null) {
+            prevY = y;
+          }
+        }
+
+        fullText += pageText + (i < pdf.numPages ? '\f' : '\n');
+      } finally {
+        if (page && typeof page.cleanup === 'function') {
+          page.cleanup();
+        }
+      }
     }
 
     return fullText;
   } catch (error) {
     console.error('Erreur PDF.js:', error);
     throw error;
+  } finally {
+    if (pdf && typeof pdf.destroy === 'function') {
+      try { await pdf.destroy(); } catch { /* ignore PDF cleanup error */ }
+    } else if (loadingTask && typeof loadingTask.destroy === 'function') {
+      try { await loadingTask.destroy(); } catch { /* ignore loadingTask cleanup error */ }
+    }
   }
 }
 
@@ -559,21 +787,34 @@ async function extractTextFromDOCX(file) {
 }
 
 function renderFileList() {
-  elements.fileList.innerHTML = '';
+  elements.fileList.textContent = '';
   uploadedFiles.forEach((file, index) => {
     const item = document.createElement('div');
     item.className = 'file-item';
-    item.innerHTML = `
-      <span class="file-name">📄 ${file.name}</span>
-      <button class="remove-file" data-index="${index}">✕</button>
-    `;
-    elements.fileList.appendChild(item);
-  });
-  document.querySelectorAll('.remove-file').forEach(btn => {
-    btn.addEventListener('click', () => {
-      uploadedFiles.splice(parseInt(btn.dataset.index), 1);
+
+    const labelWrap = document.createElement('span');
+    labelWrap.className = 'file-name';
+    labelWrap.textContent = `📄 ${file.name}`;
+
+    if (file.nlpStats && file.nlpStats.reductionRatio > 0) {
+      const statsSpan = document.createElement('span');
+      statsSpan.className = 'file-stats';
+      statsSpan.textContent = `(-${Math.round(file.nlpStats.reductionRatio * 100)}% bruit)`;
+      labelWrap.appendChild(statsSpan);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-file';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => {
+      uploadedFiles.splice(index, 1);
       renderFileList();
     });
+
+    item.appendChild(labelWrap);
+    item.appendChild(removeBtn);
+    elements.fileList.appendChild(item);
   });
 }
 
@@ -590,8 +831,33 @@ async function saveSettings() {
   const discretionVal = parseInt(elements.discretionSlider.value);
   const discretionStr = discretionIntToString[discretionVal] || 'furtif';
 
+  const domainPreset = elements.domainPreset
+    ? normalizeDomainPreset(elements.domainPreset.value)
+    : DEFAULT_BEHAVIOR_SETTINGS.domainPreset;
+  const customDomainRules = elements.customDomainRules
+    ? elements.customDomainRules.value.trim()
+    : DEFAULT_BEHAVIOR_SETTINGS.customDomainRules;
+  const crossValidationEnabled = elements.crossValidationEnabled
+    ? elements.crossValidationEnabled.checked === true
+    : DEFAULT_BEHAVIOR_SETTINGS.crossValidationEnabled;
+  const crossValidationThreshold = elements.crossValidationThreshold
+    ? clampInt(elements.crossValidationThreshold.value, 50, 90, DEFAULT_BEHAVIOR_SETTINGS.crossValidationThreshold)
+    : DEFAULT_BEHAVIOR_SETTINGS.crossValidationThreshold;
+  const autoSubmitEnabled = elements.autoSubmitEnabled
+    ? elements.autoSubmitEnabled.checked === true
+    : DEFAULT_BEHAVIOR_SETTINGS.autoSubmitEnabled;
+  const autoSubmitMinConfidence = elements.autoSubmitMinConfidence
+    ? clampInt(elements.autoSubmitMinConfidence.value, 70, 99, DEFAULT_BEHAVIOR_SETTINGS.autoSubmitMinConfidence)
+    : DEFAULT_BEHAVIOR_SETTINGS.autoSubmitMinConfidence;
+  const autoSubmitDelayMs = elements.autoSubmitDelayMs
+    ? clampInt(elements.autoSubmitDelayMs.value, 800, 5000, DEFAULT_BEHAVIOR_SETTINGS.autoSubmitDelayMs)
+    : DEFAULT_BEHAVIOR_SETTINGS.autoSubmitDelayMs;
+  const passiveNetworkIntercept = elements.passiveNetworkIntercept
+    ? elements.passiveNetworkIntercept.checked === true
+    : DEFAULT_BEHAVIOR_SETTINGS.passiveNetworkIntercept;
+
   try {
-    // S1 — Save API keys + context files to local storage (sécurité)
+    // S1 — Save API keys + context files + behavior options to local storage (sécurité)
     await chrome.storage.local.set({
       groqApiKey: elements.groqApiKey.value.trim(),
       geminiApiKey: elements.geminiApiKey.value.trim(),
@@ -599,7 +865,15 @@ async function saveSettings() {
       mistralApiKey: elements.mistralApiKey.value.trim(),
       claudeApiKey: elements.claudeApiKey.value.trim(),
       serpApiKey: elements.serpApiKey ? elements.serpApiKey.value.trim() : '',
-      contextFiles: uploadedFiles
+      contextFiles: uploadedFiles,
+      domainPreset,
+      customDomainRules,
+      crossValidationEnabled,
+      crossValidationThreshold,
+      autoSubmitEnabled,
+      autoSubmitMinConfidence,
+      autoSubmitDelayMs,
+      passiveNetworkIntercept
     });
 
     // Save non-sensitive UI settings to sync
@@ -629,6 +903,7 @@ async function saveSettings() {
 async function resetSettings() {
   if (confirm('Réinitialiser tout?')) {
     await chrome.storage.sync.clear();
+    await chrome.storage.local.remove(Object.keys(DEFAULT_BEHAVIOR_SETTINGS));
     location.reload();
   }
 }
