@@ -1,0 +1,42 @@
+# Codex permission profile fragment for Safe Exm (accompanied, no remote reviewer).
+# Merge into ~/.codex/config.toml (compatible: ~/.codex/config.toml currently has no
+# sandbox_mode or [sandbox_workspace_write], which must NOT be mixed with [permissions]).
+# Profiles govern local filesystem and network boundaries; Git commit/push approvals still
+# rely on approval_policy and the local .githooks/ gates.
+
+default_permissions = "coding-stuff-accompanied"
+
+[permissions.coding-stuff-accompanied]
+description = "Safe Exm workspace editing with secrets denied and hooks/governance read-only."
+extends = ":workspace"
+
+[permissions.coding-stuff-accompanied.filesystem]
+glob_scan_max_depth = 4
+
+[permissions.coding-stuff-accompanied.filesystem.":workspace_roots"]
+# Secrets: deny both read and write
+"**/*.env" = "deny"
+"**/*.env.*" = "deny"
+"**/*.pem" = "deny"
+"**/*.key" = "deny"
+"git_credential.json" = "deny"
+"Git_credential.txt" = "deny"
+"git_credentials.json" = "deny"
+"ag-stop-probe.json" = "deny"
+"secrets" = "deny"
+
+# Protected governance, gates, and git metadata: readable/executable, write denied
+".git" = "read"
+"AGENTS.md" = "read"
+"CLAUDE.md" = "read"
+"eslint.config.js" = "read"
+".gouvernance/**" = "read"
+".githooks/**" = "read"
+".semgrep/**" = "read"
+"tests/invariants.test.js" = "read"
+".GCC/PROTOCOL.md" = "read"
+".claude" = "read"
+".agents" = "read"
+
+[permissions.coding-stuff-accompanied.network]
+enabled = false

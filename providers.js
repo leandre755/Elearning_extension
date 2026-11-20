@@ -368,11 +368,28 @@ const QuizProviders = (() => {
    * @param {number} timeoutMs
    * @returns {Promise<Response>}
    */
+  function _sanitizeUrl(url) {
+    try {
+      const u = new URL(url);
+      if (u.username) u.username = '***';
+      if (u.password) u.password = '***';
+      if (u.hash) u.hash = '#***';
+      for (const name of [...u.searchParams.keys()]) {
+        if (/key|token|sig|secret|auth|credential|passw/i.test(name)) {
+          u.searchParams.set(name, '***');
+        }
+      }
+      return u.toString();
+    } catch {
+      return '[invalid url]';
+    }
+  }
+
   async function _directFetchWithTimeout(url, options, timeoutMs) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort();
-      console.warn(`⏱️ extensionFetch timeout (${timeoutMs}ms) sur l'URL : ${url.substring(0, 80)}...`);
+      console.warn(`⏱️ extensionFetch timeout (${timeoutMs}ms) sur l'URL : ${_sanitizeUrl(url).substring(0, 80)}...`);
     }, timeoutMs);
 
     // Fusionner le signal externe (si fourni) avec notre timeout
@@ -1106,11 +1123,11 @@ const ModelRegistry = (() => {
         });
         clearTimeout(timer);
         if (resp.status === 401 || resp.status === 403) {
-          console.warn(`⚠️ ModelRegistry Mistral [${url}]: HTTP ${resp.status}, tentative de l'autre endpoint...`);
+          console.warn(`⚠️ ModelRegistry Mistral [${new URL(url).origin}]: HTTP ${resp.status}, tentative de l'autre endpoint...`);
           continue; // Tente le suivant (ex: codestral)
         }
         if (!resp.ok) {
-          console.warn(`⚠️ ModelRegistry Mistral [${url}]: HTTP ${resp.status}`);
+          console.warn(`⚠️ ModelRegistry Mistral [${new URL(url).origin}]: HTTP ${resp.status}`);
           continue;
         }
         const data = await resp.json();
@@ -1129,7 +1146,7 @@ const ModelRegistry = (() => {
       } catch (e) {
         clearTimeout(timer);
         if (e.name !== 'AbortError') {
-          console.warn(`⚠️ ModelRegistry Mistral [${url}]: erreur fetch - ${e.message}`);
+          console.warn(`⚠️ ModelRegistry Mistral [${new URL(url).origin}]: erreur fetch - ${e.message}`);
         }
       }
     }

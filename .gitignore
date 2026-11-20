@@ -23,3 +23,9 @@ ag-stop-probe.json
 Prompt.md
 
 
+
+# Coding-Stuff AI & Security Rules
+.claude/
+.agents/
+!.env.example
+secrets/

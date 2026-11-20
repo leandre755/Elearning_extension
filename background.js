@@ -366,13 +366,96 @@ const LLM_ALLOWED_HOSTS = [
 function sanitizeUrlForLog(url) {
   try {
     const u = new URL(url);
-    if (u.searchParams.has('key')) {
-      u.searchParams.set('key', '***');
+    if (u.username) u.username = '***';
+    if (u.password) u.password = '***';
+    if (u.hash) u.hash = '#***';
+    // Masque toute valeur de paramètre ressemblant à un secret (key, token, signature, auth…).
+    for (const name of [...u.searchParams.keys()]) {
+      if (/key|token|sig|secret|auth|credential|passw/i.test(name)) {
+        u.searchParams.set(name, '***');
+      }
     }
     return u.toString();
   } catch {
     return '[invalid url]';
   }
+}
+
+/**
+ * R-TECH-02 : Détecte si un hostname (issu de URL.hostname) pointe vers un hôte local/privé.
+ * Gère IPv4 complets, IPv6 avec ou sans crochets, IPv6 IPv4-mapped (::ffff:...), et suffixes locaux.
+ */
+function isPrivateIpv4(ip) {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 ||                               // 0.0.0.0/8
+    a === 10 ||                              // 10.0.0.0/8
+    a === 127 ||                             // 127.0.0.0/8 (loopback)
+    (a === 100 && b >= 64 && b <= 127) ||    // 100.64.0.0/10 (CGNAT)
+    (a === 169 && b === 254) ||              // 169.254.0.0/16 (link-local / metadata)
+    (a === 172 && b >= 16 && b <= 31) ||     // 172.16.0.0/12
+    (a === 192 && b === 168) ||              // 192.168.0.0/16
+    a >= 224                                 // multicast & réservé
+  );
+}
+
+function isBlockedImageHost(rawHostname) {
+  if (typeof rawHostname !== 'string' || !rawHostname) return true;
+  const h = rawHostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (!h) return true;
+
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) {
+    return true;
+  }
+
+  // IPv6
+  if (h.includes(':')) {
+    if (h === '::' || h === '::1') return true;
+    if (/^fe[89ab][0-9a-f]:/.test(h)) return true; // fe80::/10 link-local
+    if (/^f[cd][0-9a-f]{2}:/.test(h)) return true;  // fc00::/7 ULA
+    if (/^ff[0-9a-f]{2}:/.test(h)) return true;     // ff00::/8 multicast
+    // ::ffff:7f00:1 (forme normalisée WHATWG URL) ou ::ffff:127.0.0.1
+    const mappedHex = h.match(/^(?:0+:){0,5}::?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/) || h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mappedHex) {
+      const hi = parseInt(mappedHex[1], 16);
+      const lo = parseInt(mappedHex[2], 16);
+      const ipv4 = `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+      return isPrivateIpv4(ipv4);
+    }
+    const mappedDotted = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mappedDotted) return isPrivateIpv4(mappedDotted[1]);
+    // Forme longue tout-zéro (0:0:0:0:0:0:0:0 ou ...:1)
+    if (/^(0+:){7}0*[01]$/.test(h)) return true;
+    return false;
+  }
+
+  // IPv4
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) {
+    return isPrivateIpv4(h);
+  }
+
+  // Hôte sans point (ex: "metadata", "redis") : intranet uniquement
+  if (!h.includes('.')) return true;
+
+  return false;
+}
+
+function sniffRasterImageMime(bytes) {
+  if (!bytes || bytes.length < 4) return null;
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return 'image/gif';
+  if (bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp';
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
 }
 
 /**
@@ -474,50 +557,51 @@ async function handleFetchImage(url) {
       return { success: false, error: 'Protocole réseau non autorisé pour les images' };
     }
 
-    // R-TECH-02 : Validation de l'hôte (Bloquer localhost, IPs privées RFC1918 et AWS/GCP metadata)
-    const hostname = parsedUrl.hostname.toLowerCase();
-    const isPrivateHost =
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1' ||
-      hostname === '169.254.169.254' ||
-      hostname.endsWith('.internal') ||
-      hostname.endsWith('.local') ||
-      /^10\./.test(hostname) ||
-      /^192\.168\./.test(hostname) ||
-      /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname) ||
-      /^fe80:/.test(hostname);
+    // R-TECH-02 : Validation de l'hôte (IPv4/IPv6 privées, loopback, link-local, metadata, suffixes locaux)
+    const isPrivateHost = isBlockedImageHost(parsedUrl.hostname);
 
     if (isPrivateHost) {
-      console.warn(`🛡️ Anti-SSRF: Tentative d'accès à un hôte privé bloquée (${hostname})`);
+      console.warn(`🛡️ Anti-SSRF: Tentative d'accès à un hôte privé bloquée (${parsedUrl.hostname.toLowerCase()})`);
       return { success: false, error: 'Accès aux ressources réseau locales/privées interdit' };
     }
 
-    console.log(`🖼️ Proxy fetch sécurisé: ${url.substring(0, 80)}...`);
+    console.log(`🖼️ Proxy fetch sécurisé: ${sanitizeUrlForLog(url).substring(0, 80)}...`);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout image
 
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
+    let blob, arrayBuffer;
+    try {
+      // Interdit les redirections 3xx (un redirect externe vers 169.254.169.254 / localhost contournerait le filtre).
+      const response = await fetch(url, { signal: controller.signal, redirect: 'error' });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      blob = await response.blob();
+      arrayBuffer = await blob.arrayBuffer();
+    } finally {
+      clearTimeout(timeoutId);
     }
 
-    const blob = await response.blob();
-    const mimeType = (blob.type || 'image/jpeg').toLowerCase();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    let mimeType = (blob.type || '').split(';')[0].trim().toLowerCase();
 
-    // R-TECH-02 : Vérifier que la ressource téléchargée est bien une image
-    if (!mimeType.startsWith('image/') && mimeType !== 'application/octet-stream') {
+    // R-TECH-02 : Vérifier que la ressource téléchargée est bien une image (magic bytes requis si MIME absent/générique)
+    if (!mimeType || mimeType === 'application/octet-stream') {
+      const sniffed = sniffRasterImageMime(uint8Array);
+      if (!sniffed) {
+        console.warn(`🛡️ Anti-SSRF: Type MIME absent ou générique sans signature d'image (${mimeType || 'empty'})`);
+        return { success: false, error: 'Le type de fichier récupéré n\'est pas une image' };
+      }
+      mimeType = sniffed;
+    } else if (!mimeType.startsWith('image/')) {
       console.warn(`🛡️ Anti-SSRF: Type MIME non image rejeté (${mimeType})`);
       return { success: false, error: 'Le type de fichier récupéré n\'est pas une image' };
     }
 
     // Convert blob to base64
-    const arrayBuffer = await blob.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
     let binary = '';
     const CHUNK_SIZE = 8192;
     for (let i = 0; i < uint8Array.length; i += CHUNK_SIZE) {

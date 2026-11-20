@@ -1,0 +1,51 @@
+{
+  "permissions": {
+    "allow": [
+      "command(git (status|diff|log)[^;&|`$()]*)",
+      "command(node --check [^;&|`$()]+)",
+      "command(node --test [^;&|`$()]+)",
+      "command(bash \\.githooks/pre-(commit|push))"
+    ],
+    "ask": [
+      "command(git (add|commit|push).*)",
+      "command(npm install.*)"
+    ],
+    "deny": [
+      "command(git commit .*(--no-verify|-n\\b|--skip-hooks).*)",
+      "command(git push .*(--no-verify|--force|-f\\b|\\+).*)",
+      "command(git (config core\\.hooksPath|-c\\s+core\\.hooksPath).*)",
+      "command(git (tag|merge|rebase).*)",
+      "command(gh (pr|release).*)",
+      "command(npm publish.*)",
+      "command(git reset --hard.*)",
+      "command(git clean -fd.*)",
+      "command(rm -rf.*)",
+      "command(sudo.*)",
+      "read_file(**/.env*)",
+      "read_file(git_credential.json)",
+      "read_file(Git_credential.txt)",
+      "read_file(git_credentials.json)",
+      "read_file(ag-stop-probe.json)",
+      "read_file(secrets/**)",
+      "read_file(.*\\.(pem|key))",
+      "write_file(**/.env*)",
+      "write_file(git_credential.json)",
+      "write_file(Git_credential.txt)",
+      "write_file(git_credentials.json)",
+      "write_file(ag-stop-probe.json)",
+      "write_file(secrets/**)",
+      "write_file(.*\\.(pem|key))",
+      "write_file(.git/**)",
+      "write_file(AGENTS.md)",
+      "write_file(CLAUDE.md)",
+      "write_file(eslint.config.js)",
+      "write_file(.gouvernance/**)",
+      "write_file(.githooks/**)",
+      "write_file(.semgrep/**)",
+      "write_file(tests/invariants.test.js)",
+      "write_file(.GCC/PROTOCOL.md)",
+      "write_file(.claude/**)",
+      "write_file(.agents/**)"
+    ]
+  }
+}

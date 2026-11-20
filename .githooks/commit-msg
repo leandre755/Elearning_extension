@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Safe Exm — commit-msg : Conventional Commits  type(scope)?: description
+set -u
+
+MSG_FILE="${1:-}"
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+  echo "[commit-msg] ERREUR : fichier de message introuvable (argument manquant)."
+  exit 2
+fi
+
+FIRST_LINE="$(grep -v '^#' "$MSG_FILE" | sed -n '/./{p;q;}')"
+
+# Messages générés par git (merge, revert, fixup/squash) : acceptés tels quels.
+case "$FIRST_LINE" in
+  "Merge "*|"Revert \""*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+
+TYPES='feat|fix|chore|docs|refactor|test|ci|perf|build|style|revert'
+if ! printf '%s' "$FIRST_LINE" | grep -qE "^($TYPES)(\([a-zA-Z0-9._/-]+\))?!?: .+"; then
+  echo ""
+  echo "[commit-msg] ❌ Message refusé : '$FIRST_LINE'"
+  echo "[commit-msg]    Format attendu : type(portée facultative): description"
+  echo "[commit-msg]    Types autorisés : feat, fix, chore, docs, refactor, test, ci, perf, build, style, revert"
+  echo "[commit-msg]    Exemples : fix(background): masque les jetons dans les logs"
+  echo "[commit-msg]               chore(gcc): met à jour le contexte de session"
+  exit 1
+fi
+
+if [ "${#FIRST_LINE}" -gt 100 ]; then
+  echo "[commit-msg] ❌ Première ligne trop longue (${#FIRST_LINE} caractères, maximum 100). Raccourcissez-la et déplacez le détail dans le corps du message."
+  exit 1
+fi
+
+exit 0

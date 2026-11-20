@@ -1,0 +1,109 @@
+# Safe Exm — project invariant rules (offline, no registry fetch).
+# Protected path: weakening requires explicit maintainer approval (AGENTS.md §4).
+rules:
+  - id: safeexm-no-dynamic-code
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Exécution de code dynamique interdite (eval, new Function, document.write, setTimeout/setInterval
+      avec une chaîne). Une extension MV3 ne doit jamais exécuter du code construit à l'exécution.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: Function(...)
+      - pattern: document.write(...)
+      - pattern: document.writeln(...)
+      - pattern: setTimeout("...", ...)
+      - pattern: setInterval("...", ...)
+      - pattern: setTimeout(`...`, ...)
+      - pattern: setInterval(`...`, ...)
+    paths:
+      exclude:
+        - lib/
+        - tests/
+
+  - id: safeexm-no-mv2-executescript
+    languages: [javascript]
+    severity: ERROR
+    message: API MV2 obsolète interdite — utiliser chrome.scripting.executeScript (MV3).
+    pattern: chrome.tabs.executeScript(...)
+    paths:
+      exclude:
+        - lib/
+        - tests/
+
+  - id: safeexm-no-remote-code
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Chargement de code distant interdit (importScripts avec URL http/https). Tout script doit être
+      embarqué dans l'extension.
+    patterns:
+      - pattern: importScripts(..., $U, ...)
+      - metavariable-regex:
+          metavariable: $U
+          regex: "^[\"'`]https?:"
+    paths:
+      exclude:
+        - lib/
+        - tests/
+
+  - id: safeexm-no-remote-script-tag
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Balise script avec src http(s) interdite - tout script doit être embarqué dans l'extension.
+    pattern-regex: '<script[^>]+src\s*=\s*["'']?https?:'
+    paths:
+      include:
+        - "*.html"
+
+  - id: safeexm-no-static-dom-signature
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Signature DOM statique interdite (data-qh-*). Stocker les métadonnées dans une WeakMap
+      (voir highlight-manager.js) pour rester indétectable.
+    pattern-regex: data-qh-
+    paths:
+      include:
+        - "*.js"
+        - "*.html"
+        - "*.css"
+      exclude:
+        - lib/
+        - tests/
+
+  - id: safeexm-no-secret-in-console
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Une variable ressemblant à une clé/secret/jeton/auth est passée à console.*. Ne jamais journaliser
+      de secret ; pour une URL utiliser sanitizeUrlForLog().
+    patterns:
+      - pattern-either:
+          - pattern: console.$M(..., $V, ...)
+          - pattern: console.$M(..., $A + $V, ...)
+          - pattern: console.$M(..., $V + $A, ...)
+          - pattern: console.$M(..., `...${$V}...`, ...)
+      - metavariable-regex:
+          metavariable: $V
+          regex: "^[A-Za-z_$][A-Za-z0-9_$]*$"
+      - metavariable-regex:
+          metavariable: $V
+          regex: "(?i)(api_?key|secret|bearer|auth|token|passw|credential)"
+    paths:
+      exclude:
+        - lib/
+        - tests/
+
+  - id: safeexm-no-wildcard-postmessage
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      postMessage avec targetOrigin "*" interdit - cibler une origine précise.
+    pattern: $W.postMessage($M, "*", ...)
+    paths:
+      exclude:
+        - lib/
+        - tests/

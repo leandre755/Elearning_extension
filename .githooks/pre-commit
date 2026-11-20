@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Safe Exm — Quality Gate (pre-commit), scope-aware.
+#   QUALITY_GATE_SCOPE=staged (défaut) : contrôle le contenu INDEXÉ du commit en cours.
+#   QUALITY_GATE_SCOPE=full            : contrôle tout l'index (ou GATE_SOURCE_REF=HEAD via pre-push).
+# Tout est vérifié sur un export isolé (git checkout-index ou git archive), jamais sur le working tree.
+# Un outil manquant BLOQUE (jamais de saut silencieux). Aucune dépendance npm.
+set -u
+
+SCOPE="${QUALITY_GATE_SCOPE:-staged}"
+SOURCE_REF="${GATE_SOURCE_REF:-INDEX}"
+if [ "$SCOPE" != "staged" ] && [ "$SCOPE" != "full" ]; then
+  echo "[Quality Gate] ERREUR : périmètre inconnu '$SCOPE' (valeurs possibles : staged, full)."
+  exit 2
+fi
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 2
+cd "$ROOT" || exit 2
+
+GATE_WORK="$(mktemp -d "${TMPDIR:-/tmp}/safeexm-gate.XXXXXX")" || {
+  echo "[Quality Gate] ERREUR : impossible de créer un dossier temporaire."
+  exit 2
+}
+GATE_EXPORT="$GATE_WORK/export"
+GATE_LOGS="$GATE_WORK/logs"
+mkdir -p "$GATE_EXPORT" "$GATE_LOGS"
+trap 'rm -rf "$GATE_WORK"' EXIT
+
+fail() {
+  echo ""
+  echo "[Quality Gate] ❌ BLOQUÉ : $1"
+  echo "[Quality Gate]    Comment corriger : $2"
+  exit 1
+}
+step() { echo "[Quality Gate] $1"; }
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "l'outil '$1' est introuvable." "$2"
+}
+
+need git "installez git."
+need node "installez Node.js (v22 ou plus récent, voir AGENTS.md §2)."
+
+echo "[Quality Gate] Démarrage (périmètre : $SCOPE, source : $SOURCE_REF)"
+
+# --- Liste NUL-délimitée des fichiers (sûre avec espaces/caractères spéciaux ; jamais les suppressions) ---
+FILES=()
+if [ "$SCOPE" = "full" ]; then
+  if [ "$SOURCE_REF" = "HEAD" ]; then
+    mapfile -d '' FILES < <(git ls-tree -r -z --name-only HEAD)
+  else
+    mapfile -d '' FILES < <(git ls-files -z)
+  fi
+else
+  mapfile -d '' FILES < <(git diff --cached --name-only -z --diff-filter=ACMR)
+fi
+
+if [ "${#FILES[@]}" -eq 0 ]; then
+  echo "[Quality Gate] Rien à contrôler dans le périmètre '$SCOPE'. OK."
+  exit 0
+fi
+
+# --- 1/7 Fichiers interdits (secrets, identifiants) ---
+step "1/7 Fichiers interdits (secrets, identifiants)..."
+FORBIDDEN=()
+for f in "${FILES[@]}"; do
+  if printf '%s' "$f" | grep -qE '(^|/)secrets/|(^|/)(\.env(\..*)?|git_credentials?\.(json|txt)|Git_credential\.txt|ag-stop-probe\.json|id_rsa|id_ed25519)$|\.(pem|key|p12|pfx)$'; then
+    if ! printf '%s' "$f" | grep -qE '(^|/)\.env\.example$'; then
+      FORBIDDEN+=("$f")
+    fi
+  fi
+done
+[ "${#FORBIDDEN[@]}" -eq 0 ] || fail "fichier(s) sensible(s) dans le périmètre : ${FORBIDDEN[*]}" "retirez-les de l'index (git rm --cached <fichier>) et ajoutez-les au .gitignore."
+
+# --- 2/7 Fichiers de politique protégés ---
+if [ "$SCOPE" = "staged" ]; then
+  step "2/7 Fichiers de politique protégés..."
+  PROTECTED=()
+  for f in "${FILES[@]}"; do
+    if printf '%s' "$f" | grep -qE '^(AGENTS\.md|CLAUDE\.md|\.GCC/PROTOCOL\.md|eslint\.config\.js|tests/invariants\.test\.js)$|^\.(githooks|semgrep|gouvernance)/'; then
+      PROTECTED+=("$f")
+    fi
+  done
+  if [ "${#PROTECTED[@]}" -gt 0 ] && [ "${ALLOW_CONFIG_EDIT:-}" != "1" ]; then
+    fail "fichier(s) de garde-fou modifié(s) : ${PROTECTED[*]}" "ces fichiers définissent les contrôles qualité ; seul le mainteneur peut les modifier. Après son accord explicite : ALLOW_CONFIG_EDIT=1 git commit ..."
+  fi
+else
+  step "2/7 Fichiers de politique protégés : contrôlés au commit (ignoré en full)."
+fi
+
+# --- 3/7 Secrets (gitleaks) ---
+step "3/7 Recherche de secrets (gitleaks)..."
+need gitleaks "installez gitleaks (https://github.com/gitleaks/gitleaks) — sans lui aucun commit n'est autorisé."
+if [ "$SCOPE" = "staged" ]; then
+  gitleaks git --staged --no-banner --redact --exit-code 1 >"$GATE_LOGS/gitleaks.log" 2>&1 || {
+    cat "$GATE_LOGS/gitleaks.log"
+    fail "gitleaks a détecté un secret dans les fichiers indexés." "retirez le secret du fichier, puis révoquez-le chez son fournisseur (il est à considérer comme compromis)."
+  }
+else
+  gitleaks git --no-banner --redact --exit-code 1 >"$GATE_LOGS/gitleaks.log" 2>&1 || {
+    cat "$GATE_LOGS/gitleaks.log"
+    fail "gitleaks a détecté un secret dans l'historique git." "ne poussez pas ; révoquez le secret et nettoyez l'historique avec le mainteneur."
+  }
+fi
+
+# --- 4/7 Interdiction de masquer un contrôle (commentaires d'inhibition) ---
+step "4/7 Commentaires d'inhibition interdits..."
+SUPP_RE='eslint-disable|@ts-ignore|@ts-nocheck|@ts-expect-error|nosemgrep|nolint|noqa'
+SUPP_EXCLUDE=(':(exclude).githooks' ':(exclude).semgrep' ':(exclude)tests/invariants.test.js' ':(exclude).gouvernance' ':(exclude).GCC' ':(exclude)*.md' ':(exclude)lib' ':(exclude)graphify-out')
+if [ "$SCOPE" = "staged" ]; then
+  SUPP_HITS="$(git diff --cached --diff-filter=ACMR -U0 -- '*.js' '*.html' '*.css' '*.json' '*.yml' "${SUPP_EXCLUDE[@]}" | grep -vE '^\+\+\+ ' | grep -E '^\+' | grep -E "$SUPP_RE" || true)"
+else
+  SUPP_TARGET=()
+  [ "$SOURCE_REF" = "HEAD" ] && SUPP_TARGET=(HEAD)
+  SUPP_HITS="$(git grep -nE "$SUPP_RE" "${SUPP_TARGET[@]}" -- '*.js' '*.html' '*.css' '*.json' '*.yml' "${SUPP_EXCLUDE[@]}" || true)"
+fi
+[ -z "$SUPP_HITS" ] || fail "commentaire d'inhibition détecté : $(printf '%s' "$SUPP_HITS" | head -3)" "corrigez le problème à la source au lieu de désactiver le contrôle."
+
+# --- Export isolé (index ou HEAD) : tout ce qui suit lit CET export ---
+if [ "$SOURCE_REF" = "HEAD" ]; then
+  git archive --format=tar HEAD | tar -x -C "$GATE_EXPORT" || fail "export de HEAD impossible." "vérifiez l'état du dépôt (git status)."
+else
+  git checkout-index -a -f --prefix="$GATE_EXPORT/" || fail "export de l'index impossible." "relancez après avoir vérifié l'état du dépôt (git status)."
+fi
+
+JS_FILES=()
+SEMGREP_TARGETS=()
+CODE_TOUCHED=0
+MANIFEST_TOUCHED=0
+
+for f in "${FILES[@]}"; do
+  case "$f" in
+    lib/*|graphify-out/*) continue ;;
+  esac
+  if [[ "$f" == *.js ]]; then
+    JS_FILES+=("$f")
+    CODE_TOUCHED=1
+    if [[ "$f" != tests/* ]]; then
+      [ -f "$GATE_EXPORT/$f" ] && SEMGREP_TARGETS+=("$GATE_EXPORT/$f")
+    fi
+  elif [[ "$f" == *.html || "$f" == *.css ]]; then
+    CODE_TOUCHED=1
+    [ -f "$GATE_EXPORT/$f" ] && SEMGREP_TARGETS+=("$GATE_EXPORT/$f")
+  elif [[ "$f" == "manifest.json" ]]; then
+    CODE_TOUCHED=1
+    MANIFEST_TOUCHED=1
+  elif [[ "$f" == "system.md" || "$f" == .semgrep/* || "$f" == tests/* ]]; then
+    CODE_TOUCHED=1
+  fi
+done
+
+# --- 5/7 Syntaxe JavaScript (sur le contenu exporté) + manifest ---
+step "5/7 Syntaxe JavaScript et manifest.json..."
+for f in "${JS_FILES[@]}"; do
+  [ -f "$GATE_EXPORT/$f" ] || continue
+  node --check "$GATE_EXPORT/$f" >"$GATE_LOGS/syntax.log" 2>&1 || {
+    cat "$GATE_LOGS/syntax.log"
+    fail "erreur de syntaxe dans $f" "corrigez la syntaxe indiquée ci-dessus puis ré-indexez le fichier (git add \"$f\")."
+  }
+done
+if [ "$MANIFEST_TOUCHED" -eq 1 ] && [ -f "$GATE_EXPORT/manifest.json" ]; then
+  node -e "const m=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if(m.manifest_version!==3){process.exit(3)}" "$GATE_EXPORT/manifest.json" \
+    || fail "manifest.json invalide (JSON cassé ou manifest_version différent de 3)." "validez le JSON et gardez \"manifest_version\": 3."
+fi
+
+if [ "$CODE_TOUCHED" -eq 0 ]; then
+  echo "[Quality Gate] Aucun fichier de code touché : règles Semgrep et invariants non nécessaires. ✅ OK"
+  exit 0
+fi
+
+# --- 6/7 Règles du projet (Semgrep, hors-ligne) ---
+step "6/7 Règles de sécurité du projet (Semgrep)..."
+need semgrep "installez semgrep (pip install semgrep) — sans lui aucun commit de code n'est autorisé."
+if [ "$SCOPE" = "full" ]; then
+  SEMGREP_TARGETS=("$GATE_EXPORT")
+fi
+if [ "${#SEMGREP_TARGETS[@]}" -gt 0 ]; then
+  SEMGREP_SEND_METRICS=off SEMGREP_ENABLE_VERSION_CHECK=0 semgrep scan \
+    --config "$GATE_EXPORT/.semgrep/rules.yml" --error --metrics=off --disable-version-check \
+    --exclude lib --exclude graphify-out --exclude tests --exclude Docs \
+    "${SEMGREP_TARGETS[@]}" >"$GATE_LOGS/semgrep.log" 2>&1
+  SEMGREP_RC=$?
+  if [ "$SEMGREP_RC" -ne 0 ]; then
+    cat "$GATE_LOGS/semgrep.log"
+    fail "Semgrep a trouvé une violation des règles du projet (code $SEMGREP_RC)." "lisez le message de la règle ci-dessus et corrigez le code ; ne désactivez jamais la règle."
+  fi
+fi
+
+# --- 7/7 Tests d'invariants (sur l'export isolé) ---
+step "7/7 Tests d'invariants du projet (node:test)..."
+[ -f "$GATE_EXPORT/tests/invariants.test.js" ] || fail "tests/invariants.test.js est absent de l'export." "restaurez ce fichier (git checkout HEAD -- tests/invariants.test.js)."
+GATE_ROOT="$GATE_EXPORT" node --test "$GATE_EXPORT/tests/invariants.test.js" >"$GATE_LOGS/tests.log" 2>&1 || {
+  cat "$GATE_LOGS/tests.log"
+  fail "un invariant du projet est violé (voir le test en échec ci-dessus)." "corrigez le code ; ne modifiez pas le test pour le faire passer."
+}
+
+echo "[Quality Gate] ✅ Toutes les vérifications sont passées (périmètre : $SCOPE)."
+exit 0

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Safe Exm — pre-push : vérifie HEAD (ce qui est réellement poussé), jamais un working tree sale.
+#   1. Exporte HEAD dans un dossier temporaire et lance les tests unitaires (_common/run-tests.sh)
+#   2. Lance la Quality Gate complète sur HEAD (QUALITY_GATE_SCOPE=full GATE_SOURCE_REF=HEAD .githooks/pre-commit)
+set -e
+
+HOOK_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$HOOK_SOURCE" ]; do
+  HOOK_TARGET="$(readlink "$HOOK_SOURCE")"
+  case "$HOOK_TARGET" in
+    /*) HOOK_SOURCE="$HOOK_TARGET" ;;
+    *) HOOK_SOURCE="$(dirname "$HOOK_SOURCE")/$HOOK_TARGET" ;;
+  esac
+done
+HOOK_DIR="$(cd "$(dirname "$HOOK_SOURCE")" && pwd)"
+ROOT="$(git rev-parse --show-toplevel)"
+
+git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || {
+  echo "[pre-push] ❌ Aucun commit HEAD à pousser."
+  exit 1
+}
+
+PUSH_TMP="$(mktemp -d "${TMPDIR:-/tmp}/safeexm-push.XXXXXX")"
+trap 'rm -rf "$PUSH_TMP"' EXIT
+git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$PUSH_TMP"
+
+echo "[pre-push] 1/2 Tests unitaires sur HEAD..."
+[ -f "$HOOK_DIR/_common/run-tests.sh" ] || { echo "[pre-push] ❌ _common/run-tests.sh introuvable : hooks incomplets, push refusé."; exit 1; }
+bash "$HOOK_DIR/_common/run-tests.sh" "$PUSH_TMP" || { echo "[pre-push] ❌ Push annulé : des tests échouent sur HEAD."; exit 1; }
+
+echo "[pre-push] 2/2 Quality Gate complète sur HEAD..."
+[ -x "$HOOK_DIR/pre-commit" ] || { echo "[pre-push] ❌ .githooks/pre-commit absent ou non exécutable : chmod +x .githooks/pre-commit"; exit 1; }
+QUALITY_GATE_SCOPE=full GATE_SOURCE_REF=HEAD "$HOOK_DIR/pre-commit" || { echo "[pre-push] ❌ Push annulé : la Quality Gate complète a échoué."; exit 1; }
+
+echo "[pre-push] ✅ Tests + Quality Gate sur HEAD validés."
+exit 0
