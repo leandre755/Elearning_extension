@@ -1415,7 +1415,10 @@ const QuizProviders = (() => {
       model: model,
       messages: messages,
       max_tokens: extraConfig.maxTokens || defaultMaxTokens,
-      temperature: extraConfig.thinking?.enabled ? undefined : 0.3, // OpenAI interdit temperature/top_p pour certains modèles de raisonnement (ex: o1)
+      // Laisser la température par défaut du provider si non demandée explicitement (et jamais en mode thinking)
+      ...(typeof extraConfig.temperature === 'number' && !extraConfig.thinking?.enabled
+        ? { temperature: extraConfig.temperature }
+        : {}),
       stream: false,
       ...extraBodyParams
     };
@@ -1508,37 +1511,33 @@ const QuizProviders = (() => {
       requestBody.system = systemPrompt;
     }
 
-    // Détection de la génération du modèle Claude (Claude 5+ ou Opus 4.6/4.7/4.8 : adaptive thinking)
-    const isAdaptiveClaude = /claude-(?:opus|sonnet|haiku|fable)-5|claude-opus-4-[678]/.test(model);
-    // Opus 5.5 et Fable 5.x imposent le thinking adaptatif toujours actif (passer temperature provoque HTTP 400)
-    const isAlwaysOnThinkingClaude = /claude-(?:opus|fable)-5/.test(model);
+    // Détection de la génération du modèle Claude (Claude 5+ / Opus 4.6-4.8 : adaptive thinking)
+    const isAdaptiveClaude = /claude-(?:opus|sonnet|haiku|fable)-5|claude-opus-4-[678]/i.test(model);
+    // Opus 4.7+, Opus 5.x, Sonnet 5.x, Haiku 5.x et Fable 5.x déprécient/rejettent temperature (HTTP 400)
+    const isSamplingDeprecatedClaude = /claude-(?:opus|sonnet|haiku|fable)-5|claude-opus-4-[78]/i.test(model);
 
-    if (thinkingConfig?.enabled || isAlwaysOnThinkingClaude) {
+    if (thinkingConfig?.enabled) {
       if (isAdaptiveClaude) {
-        if (thinkingConfig?.enabled) {
-          requestBody.thinking = {
-            type: 'adaptive',
-            display: 'summarized' // Permet d'obtenir le flux de pensée dans le stream/JSON
-          };
-          requestBody.output_config = {
-            effort: thinkingConfig.effort || 'high'
-          };
-        }
-        // CRITICAL : la température et l'échantillonnage ne doivent pas être définis avec le thinking actif
-        // (ils causeraient une erreur 400 sur adaptive / always-on thinking).
+        requestBody.thinking = {
+          type: 'adaptive',
+          display: 'summarized' // Permet d'obtenir le flux de pensée dans le stream/JSON
+        };
+        requestBody.output_config = {
+          effort: thinkingConfig.effort || 'high'
+        };
       } else {
-        // Fallback legacy pour les modèles plus anciens comme Claude 3.5 Sonnet (max_tokens doit dépasser budget_tokens)
+        // Fallback legacy pour les modèles plus anciens comme Claude 3.5/3.7 (max_tokens doit dépasser budget_tokens)
         const budgetTokens = thinkingConfig.depth ?? 10000;
         requestBody.max_tokens = Math.max(maxTokens, budgetTokens + 1024);
         requestBody.thinking = {
           type: 'enabled',
           budget_tokens: budgetTokens
         };
-        requestBody.temperature = 1.0; // Spécification Anthropic pour le mode thinking legacy
+        requestBody.temperature = 1.0; // Spécification Anthropic requise pour le mode thinking legacy
       }
-    } else {
-      // Mode standard (sans thinking sur modèles non always-on)
-      requestBody.temperature = 0.3;
+    } else if (!isSamplingDeprecatedClaude && typeof extraConfig?.temperature === 'number') {
+      // Sur modèles legacy uniquement si demandé explicitement ; sinon température par défaut du provider
+      requestBody.temperature = extraConfig.temperature;
     }
 
     const response = await extensionFetch('https://api.anthropic.com/v1/messages', {
@@ -1614,11 +1613,12 @@ const QuizProviders = (() => {
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const generationConfig = {
-      temperature: 0.3,
-      maxOutputTokens: maxTokens,
-      topP: 0.8,
-      topK: 40
+      maxOutputTokens: maxTokens
     };
+
+    if (typeof extraConfig?.temperature === 'number' && !thinkingConfig?.enabled) {
+      generationConfig.temperature = extraConfig.temperature;
+    }
 
     // Détection de la génération du modèle Gemini (Gemini 3, Gemini 4 et Gemma 4)
     const isGemini3PlusOrGemma4 = /gemini-[34]|gemma-4/i.test(model);

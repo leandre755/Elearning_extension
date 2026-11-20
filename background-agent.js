@@ -1052,8 +1052,7 @@
 
     const payload = {
       model: model,
-      messages: history.messages,
-      temperature: 0.3
+      messages: history.messages
     };
 
     if (payloadTools.length > 0) {
@@ -1173,11 +1172,6 @@
       payload.tools = payloadTools;
     }
 
-    // Opus 5.x et Fable 5.x imposent le thinking adaptatif toujours actif (temperature cause HTTP 400)
-    if (!/claude-(?:opus|fable)-5/.test(model)) {
-      payload.temperature = 0.3;
-    }
-
     if (history.system) {
       payload.system = history.system;
     }
@@ -1250,7 +1244,6 @@
     const payload = {
       contents: contentsToSend,
       generationConfig: {
-        temperature: 0.3,
         maxOutputTokens: 4096
       }
     };

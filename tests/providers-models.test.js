@@ -176,10 +176,10 @@ test('callProvider("gemini"): Gemini 4 / Gemma 4 use thinkingLevel; Gemini 2.5 h
 });
 
 // ===========================================================================
-// 3. Claude Adaptive & Always-On Thinking Rules (Claude 5.5 / Fable 5.2 / Legacy)
+// 3. Claude Adaptive & Provider Default Temperature Rules
 // ===========================================================================
 
-test('callProvider("claude"): adaptive thinking, omits temperature on Opus 5.5 / Fable 5.2, and ensures legacy max_tokens > budget_tokens', async () => {
+test('callProvider("claude"): uses adaptive thinking, omits deprecated temperature on Claude 5.x/Opus 4.7+, and keeps legacy budget guard', async () => {
   const origFetch = globalThis.fetch;
   const captured = [];
 
@@ -196,43 +196,48 @@ test('callProvider("claude"): adaptive thinking, omits temperature on Opus 5.5 /
       thinking: { enabled: true, effort: 'high' },
       retry: { maxRetries: 0 }
     });
-    // 2. Sonnet 5.5 with thinking disabled -> temperature 0.3
+    // 2. Sonnet 5.5 with thinking disabled AND even with explicit temperature override -> omits deprecated temperature
     await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-sonnet-5-5', 'Q2', [], {
       thinking: { enabled: false },
+      temperature: 0.1,
       retry: { maxRetries: 0 }
     });
-    // 3. Opus 5.5 with thinking disabled -> STILL omits temperature (always-on adaptive thinking)
+    // 3. Opus 5.5 / Haiku 5.5 / Fable 5.2 with thinking disabled -> omits temperature (provider default)
     await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-opus-5-5', 'Q3', [], {
       thinking: { enabled: false },
       retry: { maxRetries: 0 }
     });
-    // 4. Fable 5.2 with thinking disabled -> STILL omits temperature
-    await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-fable-5-2', 'Q4', [], {
+    await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-haiku-5-5', 'Q4', [], {
       thinking: { enabled: false },
       retry: { maxRetries: 0 }
     });
-    // 5. Legacy custom model with thinking enabled -> raises max_tokens above budget_tokens
-    await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-3-7-sonnet-20250219', 'Q5', [], {
+    await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-fable-5-2', 'Q5', [], {
+      thinking: { enabled: false },
+      retry: { maxRetries: 0 }
+    });
+    // 4. Legacy custom model with thinking enabled -> raises max_tokens above budget_tokens and sets 1.0
+    await QuizProviders.callProvider('claude', 'dummy-claude-key', 'claude-3-7-sonnet-20250219', 'Q6', [], {
       thinking: { enabled: true, depth: 10000 },
       retry: { maxRetries: 0 }
     });
 
-    assert.equal(captured.length, 5);
+    assert.equal(captured.length, 6);
 
     assert.deepEqual(captured[0].thinking, { type: 'adaptive', display: 'summarized' });
     assert.deepEqual(captured[0].output_config, { effort: 'high' });
     assert.equal(captured[0].temperature, undefined);
 
-    assert.equal(captured[1].temperature, 0.3);
+    assert.equal(captured[1].temperature, undefined);
     assert.equal(captured[1].thinking, undefined);
 
     assert.equal(captured[2].temperature, undefined);
     assert.equal(captured[3].temperature, undefined);
+    assert.equal(captured[4].temperature, undefined);
 
-    assert.equal(captured[4].thinking.type, 'enabled');
-    assert.equal(captured[4].thinking.budget_tokens, 10000);
-    assert.ok(captured[4].max_tokens > captured[4].thinking.budget_tokens);
-    assert.equal(captured[4].temperature, 1.0);
+    assert.equal(captured[5].thinking.type, 'enabled');
+    assert.equal(captured[5].thinking.budget_tokens, 10000);
+    assert.ok(captured[5].max_tokens > captured[5].thinking.budget_tokens);
+    assert.equal(captured[5].temperature, 1.0);
   } finally {
     globalThis.fetch = origFetch;
   }
@@ -242,7 +247,7 @@ test('callProvider("claude"): adaptive thinking, omits temperature on Opus 5.5 /
 // 4. OpenAI-Compatible Providers (Groq, NVIDIA NIM, Mistral)
 // ===========================================================================
 
-test('callProvider("groq"): avoids include_reasoning + reasoning_format conflict and skips non-reasoning models', async () => {
+test('callProvider("groq"): avoids include_reasoning + reasoning_format conflict, skips non-reasoning models, and uses provider default temperature', async () => {
   const origFetch = globalThis.fetch;
   const captured = [];
 
@@ -277,7 +282,7 @@ test('callProvider("groq"): avoids include_reasoning + reasoning_format conflict
 
     assert.equal(captured[1].reasoning_format, 'hidden');
     assert.equal(captured[1].include_reasoning, undefined);
-    assert.equal(captured[1].temperature, 0.3);
+    assert.equal(captured[1].temperature, undefined);
 
     assert.equal(captured[2].reasoning_format, undefined);
     assert.equal(captured[2].include_reasoning, undefined);
@@ -457,7 +462,7 @@ test('BackgroundAgent respects customModels, omits temperature on Opus 5.5/Fable
   );
   assert.equal(resFable.success, true);
 
-  // 3. Claude Sonnet 5.5 -> temperature 0.3
+  // 3. Claude Sonnet 5.5 -> omits deprecated temperature too
   const resSonnet = await sandbox.BackgroundAgent.learnFromFeedback(
     [{ questionText: 'Q3', agentAnswer: 'C', correctAnswer: 'C', isCorrect: true }],
     { providerOrder: ['claude'], claudeApiKey: 'dummy-claude-key', customModels: { claude: { text: 'claude-sonnet-5-5' } } }
@@ -492,11 +497,12 @@ test('BackgroundAgent respects customModels, omits temperature on Opus 5.5/Fable
   assert.equal(fableReq.body.temperature, undefined);
 
   assert.equal(sonnetReq.body.model, 'claude-sonnet-5-5');
-  assert.equal(sonnetReq.body.temperature, 0.3);
+  assert.equal(sonnetReq.body.temperature, undefined);
 
   assert.equal(nvSolveReq.body.model, 'nvidia/nemotron-3.5-super-vl-120b-a12b');
   assert.equal(nvSolveReq.body.tools, undefined);
   assert.equal(nvSolveReq.body.tool_choice, undefined);
+  assert.equal(nvSolveReq.body.temperature, undefined);
   const nvUserMsg = nvSolveReq.body.messages.find(m => m.role === 'user');
   assert.ok(Array.isArray(nvUserMsg.content), 'OpenAI tool adapter must attach image_url to user message even when system is at index 0');
   assert.ok(nvUserMsg.content.some(p => p.type === 'image_url' && p.image_url?.url === 'data:image/png;base64,BBBB'));
