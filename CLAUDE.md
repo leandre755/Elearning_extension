@@ -125,8 +125,8 @@ This repository has **no remote reviewer** (no PR bots, no CI). All quality gate
 <workflow>
 <step id="1" name="implement_and_validate">Work with minimal scope on `master`, then run the full validation command (`§2`).</step>
 <step id="2" name="independent_local_review">TOOL INVOCATION: before every commit touching code, `manifest.json`, `system.md` or `.semgrep/`, launch a fresh-context `antibug` sub-agent (mandate: `.gouvernance/antibug-prompt.md`) with only the staged diff and acceptance criteria. Fix 100% of proven findings in one batch, then re-run until clean.</step>
-<step id="3" name="local_commit">Ask human approval (`ask`), then commit with Conventional Commits; `.githooks/pre-commit` and `.githooks/commit-msg` must pass without bypass.</step>
-<step id="4" name="human_push">Only push to `origin master` after explicit human approval; `.githooks/pre-push` runs tests + full-repository gate.</step>
+<step id="3" name="local_commit">Commit locally (`allow`, guarded by `.githooks/pre-commit` + `.githooks/commit-msg`, `--no-verify`/`-n` denied) once step 2 is clean; only protected gate/policy files require `ALLOW_CONFIG_EDIT=1` after explicit human approval.</step>
+<step id="4" name="human_push">Always ask human approval (`ask`) before any `git push`; `.githooks/pre-push` runs tests + full-repository gate on `HEAD`.</step>
 </workflow>
 
 Details: [`.gouvernance/review-policy.md`](.gouvernance/review-policy.md) · [`.gouvernance/accompanied-agent.md`](.gouvernance/accompanied-agent.md) (active default; `.gouvernance/autonomous-agent.md` applies only to isolated runners).

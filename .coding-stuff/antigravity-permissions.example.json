@@ -1,13 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "command(git (status|diff|log)[^;&|`$()]*)",
+      "command(git (status|diff|log|add|commit)[^;&|`$]*)",
       "command(node --check [^;&|`$()]+)",
       "command(node --test [^;&|`$()]+)",
       "command(bash \\.githooks/pre-(commit|push))"
     ],
     "ask": [
-      "command(git (add|commit|push).*)",
+      "command(git push.*)",
       "command(npm install.*)"
     ],
     "deny": [

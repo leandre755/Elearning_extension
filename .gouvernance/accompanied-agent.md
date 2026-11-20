@@ -2,16 +2,15 @@
 
 ## Scope and Boundary
 
-This policy is the default choice for a developer working with an AI coding assistant in their IDE or terminal. The agent can explore the repository, edit files within the workspace, and execute permitted validation commands. Operations that modify Git history or publish it require **explicit human approval (`ask`)**, while irreversible actions (merging, publishing, modifying governance guardrails) remain strictly prohibited.
+This policy is the default choice for a developer working with an AI coding assistant in their IDE or terminal. The agent can explore the repository, edit non-protected files, run validation commands, and create local commits (enforced by `.githooks/pre-commit` and `.githooks/commit-msg` with `--no-verify` denied). Publishing to a remote (`git push`) requires **explicit human approval (`ask`)**, while irreversible actions (force-push, merging, publishing packages, modifying governance guardrails) remain strictly prohibited.
 
 ---
 
 ## Authorizations and Approvals
 
-- **Direct Execution (`allow`)**: Read non-sensitive project source files, edit application code in the workspace, run documented formatting/linting/test/build commands, inspect `git status`, `git diff`, `git log`, `node --check`, `node --test`, and the local gates in `.githooks/`.
+- **Direct Execution (`allow`)**: Read non-sensitive project source files, edit application code in the workspace, run documented formatting/linting/test/build commands, inspect `git status`, `git diff`, `git log`, `node --check`, `node --test`, run `.githooks/` checks, and stage/commit locally (`git add`, `git commit` with Conventional Commits and no bypass flag, after independent `antibug` review).
 - **Subject to Explicit Human Approval (`ask`)**:
-  - Staging and committing (`git add`, `git commit` with Conventional Commits message).
-  - Pushing to `origin master` (`git push origin master`).
+  - Pushing to `origin` (`git push` / `git push origin master`).
   - Package installation (`npm install`, `pip install`, `composer install`).
 
 ---
@@ -36,7 +35,7 @@ This repository has **no remote reviewer** (no PR bots, no required PR review). 
 1. **Initialization**: read `AGENTS.md`, this file, and `.gouvernance/review-policy.md`.
 2. **Implement** with minimal scope on `master` (no PR flow), then run the full validation command from `AGENTS.md` §2.
 3. **Independent local review** (mandatory before every commit that touches code, `manifest.json`, `system.md` or `.semgrep/`): launch the `antibug` sub-agent with a fresh context, giving it only the diff and the acceptance criteria. Fix 100% of its proven findings in one batch, then re-run it until it reports no finding.
-4. **Commit** (`ask`) with a Conventional Commits message. The `.githooks/pre-commit` gate runs automatically and must pass.
+4. **Commit** (`allow` once step 3 is clean, no bypass flag) with a Conventional Commits message. The `.githooks/pre-commit` and `.githooks/commit-msg` gates run automatically and must pass.
 5. **Push** (`ask`) to `origin master` only after the human explicitly approves. The `.githooks/pre-push` gate (tests + full-repository gate) must pass.
 
 An agent never approves its own work: review is always done by the independent `antibug` sub-agent or the human maintainer.

@@ -15,7 +15,8 @@ There is **no** `.github/` directory: no CI, no issue templates, no PR template,
 ## 2. Delivery
 
 - Direct commits on `master`, no pull requests.
-- Commit and push are `ask`: the human approves each one. Force pushes, tags, merges and rebases are denied to agents.
+- Local `git add` / `git commit` are `allow` (guarded by `.githooks/pre-commit`, `.githooks/commit-msg`, `--no-verify`/`-n` denial, and prior `antibug` review).
+- Every `git push` is `ask`: the human approves each push explicitly. Force pushes, tags, merges and rebases are denied to agents.
 - Every code commit is preceded by an independent `antibug` sub-agent review (`.gouvernance/review-policy.md` §2).
 
 ## 3. Issues, releases, dependencies

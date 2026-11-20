@@ -59,6 +59,11 @@ Le projet contient les principaux composants suivants :
 Exécuter `.GCC/branches/plan_swarm_core_sprint.md` dès le démarrage de la prochaine session via un essaim d'agents utilisant **Gemini 4 Hydrogen** (`gemini-4-hydrogen-high`) comme modèle principal et **Gemini 4 Neon** (`gemini-4-neon-high`) comme reviewer.
 
 ## 🧠 Decisions Made
+- **2026-11-20** : [Permissions Git : `git add` / `git commit` en `allow`, tout `git push` en `ask`]
+  - **Context**: Demande utilisateur de ne plus bloquer l'agent ni exiger une validation manuelle pour les commits locaux (déjà verrouillés par `.githooks/pre-commit`, `.githooks/commit-msg` et le `deny` sur `--no-verify`/`-n`/`--skip-hooks`), tout en maintenant l'approbation humaine (`ask`) obligatoire pour tout `git push`.
+  - **Discarded Options**: Mettre `git push` en `allow` ou lever le verrou `ALLOW_CONFIG_EDIT=1` sur les fichiers protégés.
+  - **Rationale**: `.claude/settings.json`, `.coding-stuff/antigravity-permissions.example.json`, `.gouvernance/accompanied-agent.md`, `.gouvernance/GOVERNANCE.md`, `AGENTS.md` et `CLAUDE.md` mis à jour (`allow` sur `git add`/`git commit` sans contournement, `ask` sur tout `git push`, `deny` maintenu sur `--no-verify`, `-n`, `--force`, `-f`, `+`).
+-[Antigravity-app, Gemini 4 Hydrogen, high]
 - **2026-11-20** : [Déploiement complet /coding-stuff en mode Local-Only Review (sans reviewer distant)]
   - **Context**: Dépôt solo sans PR bots ni CI distant ; demande utilisateur d'une sécurité locale maximale ne laissant passer aucun mauvais code.
   - **Discarded Options**: (1) Déployer `.github/` (PR templates, issue-triage, release, dependabot) : inadapté au workflow solo direct sur `master` sans reviewer distant ; (2) `npm install eslint` : dépendance externe non autorisée sans accord du mainteneur.
