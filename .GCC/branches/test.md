@@ -232,3 +232,21 @@
     - Passe 3 (`73feb0e7`) : 2 défauts (`hydrateTrustedConfig` écrasant les configs plates `ConfigCache.getAll()` de `submitQuizFeedback`, et rejet `.localhost`/multicast `>= 224` dans `settings.js:validateProviderBaseUrl`) → corrigés + test 8 étendu.
     - Passe 4 finale (`5fb6e6dd-e00c-4541-8908-1d310dd6667c`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
 -[Antigravity-app, Gemini 4 Argon, medium]
+
+### Run: Purge des IDs de modèles pré-2026, neutralisation des connecteurs génériques de protocole (`96fbcbe`) & ajout natif de `FreeClaudeCode (Local)` (`fcc_local`, `41ca56a`)
+- **Date**: 2026-11-22
+- **Target**: `provider-catalog.js`, `providers.js`, `settings.js`, `tests/provider-catalog.test.js` (commits `96fbcbe` et `41ca56a`)
+- **Status**: PASS
+- **Output / Evidence**:
+  - **Commit 1 (`96fbcbe`) — Purge pré-2026 & connecteurs génériques `openai_compatible` / `anthropic_compatible`** :
+    - Vérification `FORBIDDEN_LEGACY_MODEL_RE` sur les 40/41 fournisseurs (`defaultTextModel`, `defaultVisionModel`, `textModels`, `visionModels`) : `0` ID de modèle pré-2026.
+    - `openai_compatible` et `anthropic_compatible` : `baseUrl: ''`, `requiresBaseUrl: true`, `genericProtocolConnector: true`, `defaultTextModel: 'auto'`, `defaultVisionModel: 'auto'`.
+    - Passe 1 `antibug-reviewer` (`528da316`) : 2 défauts détectés (`ModelRegistry.syncProviderModels` sur cache hit `< 24h` et `ModelRegistry.getCachedModels` ne réchauffant pas `_syncedModelsCache` via `QuizProviders.warmContextCache` ; repli statique `'auto'` de `preWarmProviders` écrasant `_syncedModelsCache`) → corrigés dans `providers.js` + testés dans `tests/provider-catalog.test.js`.
+    - Passe 2 `antibug-reviewer` (`94c0cc61-b1de-47d3-89b4-36e016a6ce03`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+  - **Commit 2 (`41ca56a`) — Fournisseur local intégré `FreeClaudeCode (Local)` (`fcc_local`) sur `http://127.0.0.1:8082/v1`** :
+    - `41` fournisseurs au total (`5` cœur + `36` catalogue ; `37` cloud + `4` locaux : `fcc_local`, `lmstudio`, `llamacpp`, `ollama`).
+    - Passe 1 `antibug-reviewer` (`7eda3f17`) : 1 défaut détecté (`_extractOpenAIContextWindow(m)` dans `_fetchClaudeModels` retournant `128000` par défaut et rendant `|| 200000` inatteignable lorsque `max_input_tokens` est omis) → corrigé via `_extractOpenAIContextWindow(rawObj, fallback = 128000)` appelé avec `_extractOpenAIContextWindow(m, 200000)` dans `_fetchClaudeModels` + assertion `assert.equal(acModels[0].contextWindow, 200000)`.
+    - Passe 2 `antibug-reviewer` (`265cc45d-6f44-40a7-a518-85f8fbb18d54`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+    - Suite complète `node --test --test-concurrency=1 tests/*.test.js` : `125/125 PASS` (`0` fail).
+    - Playwright Chrome E2E (`verify_ui.py`) : `PLAYWRIGHT_OK {'total_cards': 41, 'configured_after_reload': 4, 'priority_items': 4, 'override_cards': 4, 'popup_status': '4 clés'}` (`4` locaux, `37` cloud, `#card-fcc_local` testé et persisté).
+-[Antigravity-app, Gemini 4 Argon, medium]

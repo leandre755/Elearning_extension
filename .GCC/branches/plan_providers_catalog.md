@@ -62,6 +62,30 @@ Commit: [master f61df5b] feat(providers): add 35 fcc-server HTTP REST providers 
 ```
 -[Antigravity-app, Gemini 4 Argon, medium]
 
+### Step 5: Purge des modèles pré-2026 & neutralisation des connecteurs génériques de protocole (Commit 1 `96fbcbe`)
+- [x] **Action**: Remplacer tous les anciens modèles pré-2026 (`gpt-4o*`, `gpt-4.1*`, `claude-sonnet-4*`, `llama-3.3*`, `qwen2.5*`, `grok-2*`, `grok-3*`, `deepseek-v3*`, `glm-4*`, `minimax-m2.5`, `kimi-k2.5`) par la génération `2026-11` dans `provider-catalog.js`, `providers.js` et `tests/provider-catalog.test.js` (`FORBIDDEN_LEGACY_MODEL_RE`) ; transformer `openai_compatible` et `anthropic_compatible` en connecteurs génériques de protocole (`baseUrl: ''`, `requiresBaseUrl: true`, `genericProtocolConnector: true`, `defaultTextModel: 'auto'`, cache `_syncedModelsCache`).
+- [x] **Verify**: `node --test --test-concurrency=1 tests/*.test.js && QUALITY_GATE_SCOPE=full bash .githooks/pre-commit`
+- **Verification Proof**:
+```text
+antibug-reviewer (94c0cc61-b1de-47d3-89b4-36e016a6ce03):
+AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.
+Commit: [master 96fbcbe] refactor(providers): purge pre-2026 model IDs and neutralize generic protocol connectors
+```
+-[Antigravity-app, Gemini 4 Argon, medium]
+
+### Step 6: Ajout natif de `FreeClaudeCode (Local)` (`fcc_local`) sur `127.0.0.1:8082` (Commit 2 `41ca56a`)
+- [x] **Action**: Ajouter `fcc_local` (`FreeClaudeCode (Local)`, `type: 'claude'`, `local: true`, `baseUrl: 'http://127.0.0.1:8082/v1'`, `staticApiKey: 'fcc-local'`, `sendBearerAuth: true`) dans `provider-catalog.js` (`41` fournisseurs au total : `37` cloud + `4` locaux), mettre à jour `_fetchClaudeModels` et `_extractOpenAIContextWindow(m, 200000)` dans `providers.js`, et ajouter les tests unitaires et Playwright (`41 / 41`).
+- [x] **Verify**: `node --test --test-concurrency=1 tests/*.test.js && python3 scratch/verify_ui.py && QUALITY_GATE_SCOPE=full bash .githooks/pre-commit`
+- **Verification Proof**:
+```text
+ℹ tests 125 | ℹ pass 125 | ℹ fail 0 | ℹ skipped 0
+PLAYWRIGHT_OK {'total_cards': 41, 'configured_after_reload': 4, 'priority_items': 4, 'override_cards': 4, 'popup_status': '4 clés'}
+antibug-reviewer (265cc45d-6f44-40a7-a518-85f8fbb18d54):
+AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.
+Commit: [master 41ca56a] feat(providers): add built-in FreeClaudeCode (Local) provider on 127.0.0.1:8082
+```
+-[Antigravity-app, Gemini 4 Argon, medium]
+
 ## ⚠️ Mitigations & Edge Cases
 - **Risk**: `tests/invariants.test.js` (`loadBgHelpers`) évalue `background.js` entre `sanitizeUrlForLog` et `handleFetchLLM` dans un contexte `{ URL }` isolé.
   - **Mitigation**: Laisser le bloc `sanitizeUrlForLog..sniffRasterImageMime` strictement isolé et placer `isAllowedLLMUrl` / `isLoopbackHostname` après `handleFetchLLM`.
