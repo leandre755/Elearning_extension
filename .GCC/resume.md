@@ -12,6 +12,7 @@
 
 ## ⚡ Technical Diffs / Atomic Modifications
 - **Files (commit `4482863`)**: `popup.html`, `popup.css`, `popup.js`, `settings.html`, `settings.css`, `settings.js`, `background.js`, `background-agent.js`, `content.js`, `manifest.json`, `tests/e2e-regressions.test.js` (`11 files changed, 1358 insertions(+), 827 deletions(-)`).
+- **Files (commit `b0ed02b`)**: `fonts/caveat-brush-400.woff2` (66 Ko, SIL OFL), `popup.css`, `settings.css` — intégration locale de la police craie/pinceau **Caveat Brush** sur les titres, onglets et boutons principaux.
 - **Exact Technical Change**:
   - Purge complète des formulations promotionnelles/IA et emojis dans les textes visibles ; correction de l'ancien nom `Quiz Helper AI` → `Safe Exm` et du raccourci obsolète `Alt+Q` → `Ctrl+Shift+1` dans `background.js`.
   - Refonte CSS pure hybride GRAPHITE + N3 (`popup.css`, `settings.css`) avec bascule thème clair/sombre (`data-theme="light"|"dark"`) synchronisée via `chrome.storage.local.uiTheme`.
