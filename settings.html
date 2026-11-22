@@ -31,11 +31,14 @@
       <button type="button" class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-essential" id="btn-essential">
         <span class="tab-index">01</span> Général
       </button>
+      <button type="button" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-providers" id="btn-providers">
+        <span class="tab-index">02</span> Fournisseurs
+      </button>
       <button type="button" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-advanced" id="btn-advanced">
-        <span class="tab-index">02</span> Avancé
+        <span class="tab-index">03</span> Avancé
       </button>
       <button type="button" class="tab-btn tab-expert" role="tab" aria-selected="false" aria-controls="tab-expert" id="btn-expert">
-        <span class="tab-index">03</span> Expert
+        <span class="tab-index">04</span> Expert
       </button>
     </nav>
 
@@ -45,7 +48,77 @@
 
         <section class="settings-card">
           <div class="card-header">
-            <span class="card-kicker">01 // FOURNISSEURS</span>
+            <span class="card-kicker">01 // MARQUAGE</span>
+            <h2>Discrétion</h2>
+            <p class="section-description">Choisissez comment les réponses s'affichent sur la page.</p>
+          </div>
+
+          <div class="discretion-slider-container">
+            <input type="range" id="discretionSlider" min="1" max="4" step="1" value="2">
+
+            <div class="discretion-steps">
+              <span class="step-label" data-value="1">Ultra-discret</span>
+              <span class="step-label" data-value="2">Discret</span>
+              <span class="step-label" data-value="3">Visible</span>
+              <span class="step-label" data-value="4">Lumineux</span>
+            </div>
+
+            <div class="discretion-preview-box" id="discretionPreviewBox">
+              <p id="discretionDescription">Chargement…</p>
+              <div class="highlight-preview-element" id="highlightPreviewElement">
+                <span>Réponse A</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="color-customizer-row" id="colorCustomizerRow">
+            <div class="custom-color-item">
+              <label for="highlightColor">Couleur</label>
+              <input type="color" id="highlightColor" value="#3B82F6">
+            </div>
+            <div class="custom-color-item flex-1">
+              <label for="highlightIntensity">Intensité</label>
+              <input type="range" id="highlightIntensity" min="0.1" max="1" step="0.1" value="0.4">
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <div class="card-header">
+            <span class="card-kicker">02 // CONTEXTE</span>
+            <h2>Notes de cours</h2>
+            <p class="section-description">Ajoutez vos notes ou documents pour appuyer les réponses sur votre cours.</p>
+          </div>
+
+          <div class="setting-item">
+            <label for="contextText">Texte libre</label>
+            <textarea id="contextText" rows="4" placeholder="Collez vos notes, formules ou passages utiles…"></textarea>
+          </div>
+
+          <div class="setting-item">
+            <label>Fichiers joints</label>
+            <div class="file-upload-area" id="fileUploadArea">
+              <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.csv">
+              <div class="file-upload-content">
+                <svg class="upload-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
+                  <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+                  <path d="M4 17v3h16v-3"/>
+                </svg>
+                <p class="upload-title">Glissez vos fichiers ou cliquez pour parcourir</p>
+                <p class="help-text">PDF, Word (.docx), TXT, Markdown, HTML, CSV</p>
+              </div>
+            </div>
+            <div id="fileList" class="file-list"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ONGLET 2 : FOURNISSEURS -->
+      <div id="tab-providers" class="tab-content" role="tabpanel" aria-labelledby="btn-providers">
+
+        <section class="settings-card">
+          <div class="card-header">
+            <span class="card-kicker">03 // FOURNISSEURS</span>
             <h2>Clés API</h2>
             <p class="section-description">Ajoutez au moins une clé. Si plusieurs sont renseignées, l'extension bascule automatiquement sur la suivante en cas de limite de quota.</p>
           </div>
@@ -150,76 +223,6 @@
 
         <section class="settings-card">
           <div class="card-header">
-            <span class="card-kicker">02 // MARQUAGE</span>
-            <h2>Discrétion</h2>
-            <p class="section-description">Choisissez comment les réponses s'affichent sur la page.</p>
-          </div>
-
-          <div class="discretion-slider-container">
-            <input type="range" id="discretionSlider" min="1" max="4" step="1" value="2">
-
-            <div class="discretion-steps">
-              <span class="step-label" data-value="1">Ultra-discret</span>
-              <span class="step-label" data-value="2">Discret</span>
-              <span class="step-label" data-value="3">Visible</span>
-              <span class="step-label" data-value="4">Lumineux</span>
-            </div>
-
-            <div class="discretion-preview-box" id="discretionPreviewBox">
-              <p id="discretionDescription">Chargement…</p>
-              <div class="highlight-preview-element" id="highlightPreviewElement">
-                <span>Réponse A</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="color-customizer-row" id="colorCustomizerRow">
-            <div class="custom-color-item">
-              <label for="highlightColor">Couleur</label>
-              <input type="color" id="highlightColor" value="#3B82F6">
-            </div>
-            <div class="custom-color-item flex-1">
-              <label for="highlightIntensity">Intensité</label>
-              <input type="range" id="highlightIntensity" min="0.1" max="1" step="0.1" value="0.4">
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-card">
-          <div class="card-header">
-            <span class="card-kicker">03 // CONTEXTE</span>
-            <h2>Notes de cours</h2>
-            <p class="section-description">Ajoutez vos notes ou documents pour appuyer les réponses sur votre cours.</p>
-          </div>
-
-          <div class="setting-item">
-            <label for="contextText">Texte libre</label>
-            <textarea id="contextText" rows="4" placeholder="Collez vos notes, formules ou passages utiles…"></textarea>
-          </div>
-
-          <div class="setting-item">
-            <label>Fichiers joints</label>
-            <div class="file-upload-area" id="fileUploadArea">
-              <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.csv">
-              <div class="file-upload-content">
-                <svg class="upload-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
-                  <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
-                  <path d="M4 17v3h16v-3"/>
-                </svg>
-                <p class="upload-title">Glissez vos fichiers ou cliquez pour parcourir</p>
-                <p class="help-text">PDF, Word (.docx), TXT, Markdown, HTML, CSV</p>
-              </div>
-            </div>
-            <div id="fileList" class="file-list"></div>
-          </div>
-        </section>
-      </div>
-
-      <!-- ONGLET 2 : AVANCÉ -->
-      <div id="tab-advanced" class="tab-content" role="tabpanel" aria-labelledby="btn-advanced">
-
-        <section class="settings-card">
-          <div class="card-header">
             <span class="card-kicker">04 // ROUTAGE</span>
             <h2>Ordre des fournisseurs</h2>
             <p class="section-description">Glissez les lignes pour définir l'ordre de secours entre vos clés.</p>
@@ -227,6 +230,10 @@
 
           <div id="priorityList" class="priority-list"></div>
         </section>
+      </div>
+
+      <!-- ONGLET 3 : AVANCÉ -->
+      <div id="tab-advanced" class="tab-content" role="tabpanel" aria-labelledby="btn-advanced">
 
         <section class="settings-card">
           <div class="card-header">
@@ -356,7 +363,7 @@
         </section>
       </div>
 
-      <!-- ONGLET 3 : EXPERT -->
+      <!-- ONGLET 4 : EXPERT -->
       <div id="tab-expert" class="tab-content" role="tabpanel" aria-labelledby="btn-expert">
 
         <section class="settings-card">
