@@ -1,11 +1,25 @@
 // Service Worker - Background Script
-/* global ConfigCache, QuizProviders, handleFetchSerpApi, BackgroundAgent, chrome */
+/* global ConfigCache, QuizProviders, ProviderAnalytics, handleFetchSerpApi, BackgroundAgent, chrome, Number, Array, Boolean, RegExp, encodeURIComponent, parseInt, globalThis */
 
 // Charger les modules partagés dans le contexte du service worker
-importScripts('providers.js', 'background-agent.js');
+if (typeof importScripts === 'function') {
+  importScripts('providers.js', 'background-agent.js');
+} else if (typeof require === 'function' && typeof module !== 'undefined' && module.exports) {
+  if (typeof globalThis.QuizProviders === 'undefined' || typeof globalThis.ConfigCache === 'undefined') {
+    try {
+      require('./providers.js');
+    } catch (_) { /* ignore if unavailable in isolated test */ }
+  }
+  if (typeof globalThis.BackgroundAgent === 'undefined') {
+    try {
+      require('./background-agent.js');
+    } catch (_) { /* ignore if unavailable in isolated test */ }
+  }
+}
 
 // CRIT-05 : Mutex global d'injections en cours par tabId pour éviter la double injection
 const _injectionsInProgress = new Map();
+const _bridgeInjectionsInProgress = new Map();
 
 // ──────────────────────────────────────────────
 // SEC-05 : Chargeur de system prompt (contexte extension, non-accessible au web)
@@ -80,40 +94,44 @@ async function broadcastToActiveTabs(actionObject) {
   return success;
 }
 
-chrome.commands.onCommand.addListener(async (command) => {
-  console.log(`Command received: ${command}`);
+if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener(async (command) => {
+    console.log(`Command received: ${command}`);
 
-  switch (command) {
-    case 'toggle-extension':
-      await toggleExtension();
-      break;
+    switch (command) {
+      case 'toggle-extension':
+        await toggleExtension();
+        break;
 
-    case 'analyze-quiz':
-      const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
-      if (!settings.enabled) {
-        showNotification('Activez d\'abord l\'extension (Alt+Q)');
-        return;
+      case 'analyze-quiz': {
+        const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
+        if (!settings.enabled) {
+          showNotification('Activez d\'abord l\'extension (Alt+Q)');
+          return;
+        }
+        const analyzeSuccess = await broadcastToActiveTabs({
+          action: 'analyzeQuiz',
+          settings,
+          forceFallback: true
+        });
+        if (!analyzeSuccess) showNotification("Impossible de trouver l'onglet actif pour analyser. Rechargez la page.");
+        break;
       }
-      const analyzeSuccess = await broadcastToActiveTabs({
-        action: 'analyzeQuiz',
-        settings,
-        forceFallback: true
-      });
-      if (!analyzeSuccess) showNotification("Impossible de trouver l'onglet actif pour analyser. Rechargez la page.");
-      break;
 
-    case 'toggle-auto-mode':
-      await toggleAutoMode();
-      break;
+      case 'toggle-auto-mode':
+        await toggleAutoMode();
+        break;
 
-    case 'clear-highlights':
-      const clearSuccess = await broadcastToActiveTabs({ action: 'clearHighlights' });
-      if (clearSuccess) {
-        showNotification('Surlignages effacés');
+      case 'clear-highlights': {
+        const clearSuccess = await broadcastToActiveTabs({ action: 'clearHighlights' });
+        if (clearSuccess) {
+          showNotification('Surlignages effacés');
+        }
+        break;
       }
-      break;
-  }
-});
+    }
+  });
+}
 
 // ──────────────────────────────────────────────
 // Toggle Extension
@@ -253,12 +271,325 @@ async function analyzeCurrentQuiz(tab) {
 }
 
 // ──────────────────────────────────────────────
-// CORS Image Proxy
+// Pre-Warm, Analytics & On-Demand MAIN-World Page Bridge Handlers
 // ──────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+const SYNC_CONFIG_KEYS = [
+  'captureImages', 'imageMinSize', 'imageQuality',
+  'contextText', 'customQuestionSelector', 'customAnswerSelector',
+  'highlightColor', 'highlightIntensity', 'highlightDiscretion',
+  'providerOrder', 'customModels', 'agenticSearch', 'autoMode', 'enabled'
+];
+
+const LOCAL_CONFIG_KEYS = [
+  'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
+  'mistralApiKey', 'claudeApiKey',
+  'serpApiKey', 'contextFiles'
+];
+
+let _lastPreWarmConfigSignature = null;
+
+function handleTabRemoved(tabId) {
+  _injectionsInProgress.delete(tabId);
+  _bridgeInjectionsInProgress.delete(tabId);
+}
+
+if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onRemoved && typeof chrome.tabs.onRemoved.addListener === 'function') {
+  chrome.tabs.onRemoved.addListener(handleTabRemoved);
+}
+
+/**
+ * Redacts URLs (via sanitizeUrlForLog), API keys, Bearer tokens, and configured secrets
+ * from error messages before logging or returning to callers.
+ */
+function sanitizeErrorMessage(rawError, config) {
+  let raw = '';
+  if (typeof rawError === 'string') {
+    raw = rawError;
+  } else if (rawError && typeof rawError.message === 'string') {
+    raw = rawError.message;
+  } else if (rawError !== undefined && rawError !== null) {
+    raw = String(rawError);
+  }
+  if (!raw) return 'Erreur inconnue';
+
+  let cleaned = raw
+    .replace(/https?:\/\/[^\s"'<>\\]+/gi, (match) => sanitizeUrlForLog(match))
+    .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
+    .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,})\b/g, '***')
+    .replace(/(\\"?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\"?\s*[:=]\s*\\")[^"]*\\"/gi, '$1***\\"')
+    .replace(/(\\'?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\'?\s*[:=]\s*\\')[^']*\\'/gi, "$1***\\'")
+    .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b["']?\s*[:=]\s*)(["'])(?:(?!\2)[^\\]|\\.)*\2/gi, '$1$2***$2')
+    .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential)\b["']?\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?[^\s&,;}"'\\\]]+/gi, '$1***')
+    .replace(/(\bkey\s*=\s*)[^\s&,;}"'\\\]]+/gi, '$1***');
+
+  if (config && typeof config === 'object') {
+    for (const field of LOCAL_CONFIG_KEYS) {
+      const val = config[field];
+      if (typeof val === 'string' && val.trim().length >= 4 && cleaned.includes(val.trim())) {
+        cleaned = cleaned.split(val.trim()).join('***');
+      }
+    }
+  }
+  return cleaned;
+}
+
+async function resolveConfigForPreWarm(message) {
+  let cachedConfig = {};
+  const hasConfigCache = typeof ConfigCache !== 'undefined' && ConfigCache !== null;
+  const isCacheInit = hasConfigCache &&
+    (typeof ConfigCache.isInitialized !== 'function' || ConfigCache.isInitialized());
+
+  if (isCacheInit && typeof ConfigCache.getAll === 'function') {
+    try {
+      cachedConfig = ConfigCache.getAll() || {};
+    } catch (_) {
+      cachedConfig = {};
+    }
+  }
+
+  let storageConfig = {};
+  if (typeof chrome !== 'undefined' && chrome && chrome.storage) {
+    try {
+      const [syncData, localData] = await Promise.all([
+        chrome.storage.sync && typeof chrome.storage.sync.get === 'function'
+          ? Promise.resolve(chrome.storage.sync.get(SYNC_CONFIG_KEYS))
+          : Promise.resolve({}),
+        chrome.storage.local && typeof chrome.storage.local.get === 'function'
+          ? Promise.resolve(chrome.storage.local.get(LOCAL_CONFIG_KEYS))
+          : Promise.resolve({})
+      ]);
+      storageConfig = {
+        ...(syncData && typeof syncData === 'object' ? syncData : {}),
+        ...(localData && typeof localData === 'object' ? localData : {})
+      };
+    } catch (_) {
+      storageConfig = {};
+    }
+  }
+
+  const baseConfig = Object.keys(storageConfig).length > 0
+    ? storageConfig
+    : cachedConfig;
+
+  if (message && message.config && typeof message.config === 'object') {
+    return { ...baseConfig, ...message.config };
+  }
+  return baseConfig;
+}
+
+function computePreWarmSignature(config) {
+  if (!config || typeof config !== 'object') return '';
+  const activeProviders = LOCAL_CONFIG_KEYS
+    .filter((k) => k !== 'contextFiles' && typeof config[k] === 'string' && config[k].trim().length > 0)
+    .sort()
+    .join(',');
+  const order = Array.isArray(config.providerOrder) ? config.providerOrder.join(',') : '';
+  return `${activeProviders}|${order}`;
+}
+
+/**
+ * F-AUTO-02 : Pre-warms provider metadata and context caches.
+ * @param {Object} [message]
+ * @returns {Promise<Object>}
+ */
+async function handlePreWarmProviders(message = {}) {
+  let config = {};
+  try {
+    config = await resolveConfigForPreWarm(message);
+    if (typeof QuizProviders === 'undefined' || !QuizProviders || typeof QuizProviders.preWarmProviders !== 'function') {
+      throw new Error('QuizProviders.preWarmProviders non disponible');
+    }
+
+    const rawOptions = (message && message.options && typeof message.options === 'object')
+      ? { ...message.options }
+      : {};
+    if (message && typeof message === 'object') {
+      if (message.force !== undefined && rawOptions.force === undefined) rawOptions.force = message.force;
+      if (message.ttlMs !== undefined && rawOptions.ttlMs === undefined) rawOptions.ttlMs = message.ttlMs;
+      if (message.syncModels !== undefined && rawOptions.syncModels === undefined) rawOptions.syncModels = message.syncModels;
+      if (message.now !== undefined && rawOptions.now === undefined) rawOptions.now = message.now;
+    }
+
+    const currentSignature = computePreWarmSignature(config);
+    const configChanged = _lastPreWarmConfigSignature !== null && _lastPreWarmConfigSignature !== currentSignature;
+    _lastPreWarmConfigSignature = currentSignature;
+
+    const preWarmConfigArg = { ...config, ...rawOptions };
+    Object.defineProperty(preWarmConfigArg, 'config', {
+      value: config,
+      enumerable: false,
+      configurable: true,
+      writable: true
+    });
+    if (configChanged && rawOptions.force === undefined) {
+      Object.defineProperty(preWarmConfigArg, 'force', {
+        value: true,
+        enumerable: false,
+        configurable: true,
+        writable: true
+      });
+    }
+
+    const result = await QuizProviders.preWarmProviders(preWarmConfigArg, rawOptions);
+    return {
+      success: true,
+      ...(result && typeof result === 'object' ? result : {})
+    };
+  } catch (err) {
+    const safeError = sanitizeErrorMessage(err, config);
+    console.error('[handlePreWarmProviders] Erreur:', safeError);
+    return { success: false, error: safeError };
+  }
+}
+
+/**
+ * F-ANA-03 : Returns persisted/in-memory provider telemetry stats.
+ * @returns {Promise<{success: boolean, stats?: Object, error?: string}>}
+ */
+async function handleGetProviderStats() {
+  try {
+    const analytics = (typeof QuizProviders !== 'undefined' && QuizProviders && QuizProviders.ProviderAnalytics)
+      ? QuizProviders.ProviderAnalytics
+      : (typeof ProviderAnalytics !== 'undefined' ? ProviderAnalytics : null);
+
+    if (!analytics) {
+      throw new Error('ProviderAnalytics non disponible');
+    }
+
+    let stats = null;
+    if (typeof analytics.loadStats === 'function') {
+      stats = await analytics.loadStats();
+    }
+    if ((!stats || typeof stats !== 'object') && typeof analytics.getStats === 'function') {
+      stats = await analytics.getStats();
+    }
+    return { success: true, stats };
+  } catch (err) {
+    const safeError = sanitizeErrorMessage(err);
+    console.error('[handleGetProviderStats] Erreur:', safeError);
+    return { success: false, error: safeError };
+  }
+}
+
+/**
+ * F-ANA-03 : Resets persisted and in-memory provider telemetry stats.
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function handleResetProviderStats() {
+  try {
+    const analytics = (typeof QuizProviders !== 'undefined' && QuizProviders && QuizProviders.ProviderAnalytics)
+      ? QuizProviders.ProviderAnalytics
+      : (typeof ProviderAnalytics !== 'undefined' ? ProviderAnalytics : null);
+
+    if (!analytics || typeof analytics.resetStats !== 'function') {
+      throw new Error('ProviderAnalytics.resetStats non disponible');
+    }
+
+    await analytics.resetStats();
+    return { success: true };
+  } catch (err) {
+    const safeError = sanitizeErrorMessage(err);
+    console.error('[handleResetProviderStats] Erreur:', safeError);
+    return { success: false, error: safeError };
+  }
+}
+
+function isAllowedPageBridgeUrl(candidateUrl) {
+  if (typeof candidateUrl !== 'string' || !/^https?:\/\//i.test(candidateUrl.trim())) {
+    return false;
+  }
+  try {
+    const parsed = new URL(candidateUrl.trim());
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && Boolean(parsed.hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * F-DET-03 / F-DET-04 : On-demand injection of page-bridge.js into the tab's MAIN world.
+ * Strictly gated to http(s) URLs and deduplicated per tabId via _bridgeInjectionsInProgress.
+ * @param {Object} [message]
+ * @param {Object} [sender]
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function handleInjectPageBridge(message = {}, sender = {}) {
+  const tabId = sender?.tab?.id ?? message?.tabId;
+  if (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId <= 0) {
+    return { success: false, error: 'tabId invalide ou introuvable' };
+  }
+
+  const senderTabUrl = (sender && sender.tab && typeof sender.tab.url === 'string')
+    ? sender.tab.url.trim()
+    : '';
+
+  if (senderTabUrl && !isAllowedPageBridgeUrl(senderTabUrl)) {
+    return { success: false, error: 'URL non autorisée pour page-bridge' };
+  }
+
+  if (_bridgeInjectionsInProgress.has(tabId)) {
+    return _bridgeInjectionsInProgress.get(tabId);
+  }
+
+  const bridgePromise = (async () => {
+    try {
+      let tabUrl = senderTabUrl;
+      if (!tabUrl && typeof chrome !== 'undefined' && chrome.tabs && typeof chrome.tabs.get === 'function') {
+        try {
+          const tabInfo = await chrome.tabs.get(tabId);
+          if (tabInfo && typeof tabInfo.url === 'string') {
+            tabUrl = tabInfo.url.trim();
+          }
+        } catch (_) {
+          tabUrl = '';
+        }
+      }
+
+      if (!isAllowedPageBridgeUrl(tabUrl)) {
+        return { success: false, error: 'URL non autorisée pour page-bridge' };
+      }
+
+      if (typeof chrome === 'undefined' || !chrome.scripting || typeof chrome.scripting.executeScript !== 'function') {
+        throw new Error('chrome.scripting.executeScript non disponible');
+      }
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['page-bridge.js'],
+        world: 'MAIN'
+      });
+
+      return { success: true };
+    } catch (err) {
+      const safeError = sanitizeErrorMessage(err);
+      console.error(`[handleInjectPageBridge] Erreur injection tab ${tabId}:`, safeError);
+      return { success: false, error: safeError };
+    }
+  })();
+
+  _bridgeInjectionsInProgress.set(tabId, bridgePromise);
+
+  try {
+    return await bridgePromise;
+  } finally {
+    if (_bridgeInjectionsInProgress.get(tabId) === bridgePromise) {
+      _bridgeInjectionsInProgress.delete(tabId);
+    }
+  }
+}
+
+// ──────────────────────────────────────────────
+// CORS Image Proxy & Runtime Messaging
+// ──────────────────────────────────────────────
+
+function handleRuntimeMessage(message, sender, sendResponse) {
+  if (!message || typeof message !== 'object') {
+    return false;
+  }
+
   if (message.action === 'injectCoreScripts') {
-    const tabId = sender.tab?.id;
+    const tabId = sender?.tab?.id;
     if (tabId) {
       injectCoreScripts(tabId)
         .then(() => sendResponse({ success: true }))
@@ -266,6 +597,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else {
       sendResponse({ success: false, error: 'tabId introuvable' });
     }
+    return true; // Async response
+  }
+
+  if (message.action === 'injectPageBridge') {
+    handleInjectPageBridge(message, sender)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
+    return true; // Async response
+  }
+
+  if (message.action === 'preWarmProviders') {
+    handlePreWarmProviders(message)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
+    return true; // Async response
+  }
+
+  if (message.action === 'getProviderStats') {
+    handleGetProviderStats()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
+    return true; // Async response
+  }
+
+  if (message.action === 'resetProviderStats') {
+    handleResetProviderStats()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
     return true; // Async response
   }
 
@@ -314,35 +673,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // Async response
   }
-});
+
+  return false;
+}
+
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+}
 
 // ──────────────────────────────────────────────
 // PORT-BASED MESSAGING pour les opérations longues (solveQuiz / analyzeDelta)
 // Chrome maintient le Service Worker en vie tant qu'un port est ouvert.
 // ──────────────────────────────────────────────
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'solveQuiz') return;
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect) {
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== 'solveQuiz') return;
 
-  port.onMessage.addListener((message) => {
-    if (message.action === 'solveQuiz' || message.action === 'analyzeDelta') {
-      BackgroundAgent.solve(message.task)
-        .then(result => {
-          try { port.postMessage(result); } catch (_) { /* port fermé côté content */ }
-        })
-        .catch(error => {
-          try {
-            port.postMessage({
-              success: false,
-              answers: [],
-              metadata: { questionsTotal: 0, answersFound: 0, totalDurationMs: 0 },
-              journal: [],
-              error: error.message
-            });
-          } catch (_) { /* port fermé côté content */ }
-        });
-    }
+    port.onMessage.addListener((message) => {
+      if (message.action === 'solveQuiz' || message.action === 'analyzeDelta') {
+        BackgroundAgent.solve(message.task)
+          .then(result => {
+            try { port.postMessage(result); } catch (_) { /* port fermé côté content */ }
+          })
+          .catch(error => {
+            try {
+              port.postMessage({
+                success: false,
+                answers: [],
+                metadata: { questionsTotal: 0, answersFound: 0, totalDurationMs: 0 },
+                journal: [],
+                error: error.message
+              });
+            } catch (_) { /* port fermé côté content */ }
+          });
+      }
+    });
   });
-});
+}
 
 /**
  * Allowed LLM API hosts — prevents the proxy from being used as an open relay.
@@ -654,128 +1021,155 @@ function showNotification(message) {
 // Installation
 // ──────────────────────────────────────────────
 
-chrome.runtime.onInstalled.addListener(async (details) => {
-  // S1 — Migrate API keys from sync to local storage (security)
-  const API_KEY_FIELDS = [
-    'claudeApiKey', 'geminiApiKey', 'groqApiKey',
-    'nvidiaApiKey', 'mistralApiKey'
-  ];
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalled) {
+  chrome.runtime.onInstalled.addListener(async (details) => {
+    // S1 — Migrate API keys from sync to local storage (security)
+    const API_KEY_FIELDS = [
+      'claudeApiKey', 'geminiApiKey', 'groqApiKey',
+      'nvidiaApiKey', 'mistralApiKey'
+    ];
 
-  try {
-    const syncData = await chrome.storage.sync.get(API_KEY_FIELDS);
-    const keysToMigrate = {};
-    let hasKeys = false;
+    try {
+      const syncData = await chrome.storage.sync.get(API_KEY_FIELDS);
+      const keysToMigrate = {};
+      let hasKeys = false;
 
-    for (const field of API_KEY_FIELDS) {
-      if (syncData[field] && syncData[field].trim().length > 0) {
-        keysToMigrate[field] = syncData[field];
-        hasKeys = true;
+      for (const field of API_KEY_FIELDS) {
+        if (syncData[field] && syncData[field].trim().length > 0) {
+          keysToMigrate[field] = syncData[field];
+          hasKeys = true;
+        }
       }
+
+      if (hasKeys) {
+        await chrome.storage.local.set(keysToMigrate);
+        await chrome.storage.sync.remove(API_KEY_FIELDS);
+        console.log('🔄 Clés API migrées de sync vers local storage');
+      }
+    } catch (e) {
+      console.error('Erreur migration clés API:', e);
     }
 
-    if (hasKeys) {
-      await chrome.storage.local.set(keysToMigrate);
-      await chrome.storage.sync.remove(API_KEY_FIELDS);
-      console.log('🔄 Clés API migrées de sync vers local storage');
+    // Initialisation de la mémoire de l'Agent 3.0
+    try {
+      const memData = await chrome.storage.local.get(['agentMemory']);
+      if (!memData.agentMemory) {
+        await chrome.storage.local.set({ agentMemory: [] });
+      }
+    } catch (e) {
+      console.error('Erreur init agentMemory:', e);
     }
-  } catch (e) {
-    console.error('Erreur migration clés API:', e);
-  }
 
-  // Initialisation de la mémoire de l'Agent 3.0
-  try {
-    const memData = await chrome.storage.local.get(['agentMemory']);
-    if (!memData.agentMemory) {
-      await chrome.storage.local.set({ agentMemory: [] });
+    if (details.reason === 'install') {
+      chrome.tabs.create({ url: 'settings.html' });
     }
-  } catch (e) {
-    console.error('Erreur init agentMemory:', e);
-  }
 
-  if (details.reason === 'install') {
-    chrome.tabs.create({ url: 'settings.html' });
-  }
+    // ──────────────────────────────────────────────
+    // Context Menus
+    // ──────────────────────────────────────────────
+    try {
+      // Parent root menu
+      chrome.contextMenus.create({
+        id: "safe-exm-root",
+        title: "🧠 Quiz Helper AI",
+        contexts: ["all"]
+      });
 
-  // ──────────────────────────────────────────────
-  // Context Menus
-  // ──────────────────────────────────────────────
-  try {
-    // Parent root menu
-    chrome.contextMenus.create({
-      id: "safe-exm-root",
-      title: "🧠 Quiz Helper AI",
-      contexts: ["all"]
-    });
+      // Child menus
+      chrome.contextMenus.create({
+        id: "cm-analyze-quiz",
+        parentId: "safe-exm-root",
+        title: "🔍 Analyser le Quiz",
+        contexts: ["all"]
+      });
 
-    // Child menus
-    chrome.contextMenus.create({
-      id: "cm-analyze-quiz",
-      parentId: "safe-exm-root",
-      title: "🔍 Analyser le Quiz",
-      contexts: ["all"]
-    });
+      chrome.contextMenus.create({
+        id: "cm-toggle-extension",
+        parentId: "safe-exm-root",
+        title: "🔛 Activer/Désactiver l'extension",
+        contexts: ["all"]
+      });
 
-    chrome.contextMenus.create({
-      id: "cm-toggle-extension",
-      parentId: "safe-exm-root",
-      title: "🔛 Activer/Désactiver l'extension",
-      contexts: ["all"]
-    });
+      chrome.contextMenus.create({
+        id: "cm-toggle-auto-mode",
+        parentId: "safe-exm-root",
+        title: "⚡ Activer/Désactiver le Mode Auto",
+        contexts: ["all"]
+      });
+      
+      chrome.contextMenus.create({
+        id: "cm-clear-highlights",
+        parentId: "safe-exm-root",
+        title: "🧹 Effacer les surlignages",
+        contexts: ["all"]
+      });
 
-    chrome.contextMenus.create({
-      id: "cm-toggle-auto-mode",
-      parentId: "safe-exm-root",
-      title: "⚡ Activer/Désactiver le Mode Auto",
-      contexts: ["all"]
-    });
-    
-    chrome.contextMenus.create({
-      id: "cm-clear-highlights",
-      parentId: "safe-exm-root",
-      title: "🧹 Effacer les surlignages",
-      contexts: ["all"]
-    });
-
-    chrome.contextMenus.create({
-      id: "cm-paste-answer",
-      parentId: "safe-exm-root",
-      title: "📋 Coller la réponse",
-      contexts: ["all"]
-    });
-  } catch (e) {
-    console.error("Context Menu Creation Error:", e);
-  }
-});
+      chrome.contextMenus.create({
+        id: "cm-paste-answer",
+        parentId: "safe-exm-root",
+        title: "📋 Coller la réponse",
+        contexts: ["all"]
+      });
+    } catch (e) {
+      console.error("Context Menu Creation Error:", e);
+    }
+  });
+}
 
 // ──────────────────────────────────────────────
 // Context Menus Handler
 // ──────────────────────────────────────────────
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (!tab) return;
-  
-  switch (info.menuItemId) {
-    case 'cm-toggle-extension':
-      await toggleExtension();
-      break;
+if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.contextMenus.onClicked) {
+  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+    if (!tab) return;
+    
+    switch (info.menuItemId) {
+      case 'cm-toggle-extension':
+        await toggleExtension();
+        break;
 
-    case 'cm-analyze-quiz':
-      await analyzeCurrentQuiz(tab);
-      break;
+      case 'cm-analyze-quiz':
+        await analyzeCurrentQuiz(tab);
+        break;
 
-    case 'cm-toggle-auto-mode':
-      await toggleAutoMode();
-      break;
-      
-    case 'cm-clear-highlights':
-      try {
-        await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
-      } catch(e) { /* ignore if content script not loaded */ }
-      break;
+      case 'cm-toggle-auto-mode':
+        await toggleAutoMode();
+        break;
+        
+      case 'cm-clear-highlights':
+        try {
+          await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
+        } catch(e) { /* ignore if content script not loaded */ }
+        break;
 
-    case 'cm-paste-answer':
-      try {
-        await chrome.tabs.sendMessage(tab.id, { action: 'pasteAnswer' });
-      } catch(e) { /* ignore if content script not loaded */ }
-      break;
-  }
-});
+      case 'cm-paste-answer':
+        try {
+          await chrome.tabs.sendMessage(tab.id, { action: 'pasteAnswer' });
+        } catch(e) { /* ignore if content script not loaded */ }
+        break;
+    }
+  });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    handleLoadSystemPrompt,
+    handlePreWarmProviders,
+    handleGetProviderStats,
+    handleResetProviderStats,
+    handleInjectPageBridge,
+    handleRuntimeMessage,
+    handleFetchLLM,
+    handleFetchSerpApi,
+    handleFetchImage,
+    injectCoreScripts,
+    sanitizeUrlForLog,
+    sanitizeErrorMessage,
+    isPrivateIpv4,
+    isBlockedImageHost,
+    sniffRasterImageMime,
+    handleTabRemoved,
+    _injectionsInProgress,
+    _bridgeInjectionsInProgress
+  };
+}
