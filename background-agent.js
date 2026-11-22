@@ -3,7 +3,27 @@
 // Architecture : ReAct loop + Multi-Provider Tool Calling Adapters + Robust Fallbacks
 // Ce fichier est chargé dans le service worker via importScripts.
 // ============================================================
-/* global ConfigCache, QuizProviders, handleFetchSerpApi, chrome, module, Date, Array, Number, Boolean, RegExp, parseInt, isNaN */
+/* global ConfigCache, QuizProviders, CourseMedia, handleFetchSerpApi, chrome, module, Date, Array, Number, Boolean, RegExp, parseInt, isNaN */
+
+const _LoadedCourseMedia = (() => {
+  if (typeof globalThis !== 'undefined' && globalThis.CourseMedia) {
+    return globalThis.CourseMedia;
+  }
+  if (typeof self !== 'undefined' && self.CourseMedia) {
+    return self.CourseMedia;
+  }
+  if (typeof window !== 'undefined' && window.CourseMedia) {
+    return window.CourseMedia;
+  }
+  if (typeof require === 'function') {
+    try {
+      return require('./course-media.js');
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+})();
 
 const BackgroundAgent = (() => {
   'use strict';
@@ -18,6 +38,92 @@ const BackgroundAgent = (() => {
   const DEFAULT_CROSS_VALIDATION_THRESHOLD = 70;
   const MAX_CROSS_VALIDATION_QUESTIONS = 5;
   const CROSS_VALIDATION_TIMEOUT_MS = 45000;
+  const SAFE_RASTER_DATA_URL_RE = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/;
+
+  function _parseImageDataUrl(dataUrl) {
+    if (_LoadedCourseMedia && typeof _LoadedCourseMedia.parseImageDataUrl === 'function') {
+      return _LoadedCourseMedia.parseImageDataUrl(dataUrl);
+    }
+    if (typeof dataUrl !== 'string') return null;
+    const match = SAFE_RASTER_DATA_URL_RE.exec(dataUrl);
+    if (!match) return null;
+    return { mimeType: match[1], base64: match[2] };
+  }
+
+  function _extractContextMedia(contextFiles) {
+    if (_LoadedCourseMedia && typeof _LoadedCourseMedia.extractContextMedia === 'function') {
+      return _LoadedCourseMedia.extractContextMedia(contextFiles);
+    }
+    const textFiles = [];
+    const imageFiles = [];
+    if (!Array.isArray(contextFiles)) {
+      return { textFiles, imageFiles };
+    }
+    const seen = new Set();
+    for (const entry of contextFiles) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (entry.kind === 'image' || typeof entry.dataUrl === 'string') {
+        const parsed = _parseImageDataUrl(entry.dataUrl);
+        if (!parsed || seen.has(entry.dataUrl)) continue;
+        seen.add(entry.dataUrl);
+        imageFiles.push({
+          name: (typeof entry.name === 'string' && entry.name.trim()) ? entry.name.trim() : 'image',
+          dataUrl: entry.dataUrl,
+          mimeType: parsed.mimeType,
+          width: (typeof entry.width === 'number' && Number.isFinite(entry.width) && entry.width > 0) ? entry.width : 0,
+          height: (typeof entry.height === 'number' && Number.isFinite(entry.height) && entry.height > 0) ? entry.height : 0,
+          source: 'course-note'
+        });
+        continue;
+      }
+      if (typeof entry.content === 'string' && entry.content.trim().length > 0) {
+        textFiles.push(entry);
+      }
+    }
+    return { textFiles, imageFiles };
+  }
+
+  function _mergeRequestImages(contextImages, questionImages) {
+    if (_LoadedCourseMedia && typeof _LoadedCourseMedia.mergeRequestImages === 'function') {
+      return _LoadedCourseMedia.mergeRequestImages(contextImages, questionImages);
+    }
+    const merged = [];
+    const seen = new Set();
+    const sources = [
+      ...(Array.isArray(contextImages) ? contextImages : []),
+      ...(Array.isArray(questionImages) ? questionImages : [])
+    ];
+    for (const img of sources) {
+      if (!img || typeof img !== 'object') continue;
+      const parsed = _parseImageDataUrl(img.dataUrl);
+      if (!parsed || seen.has(img.dataUrl)) continue;
+      seen.add(img.dataUrl);
+      merged.push({ ...img, mimeType: parsed.mimeType, dataUrl: img.dataUrl });
+    }
+    return merged;
+  }
+
+  function _getValidQuestionImages(q) {
+    if (!q || !Array.isArray(q.images) || q.images.length === 0) {
+      return [];
+    }
+    return _mergeRequestImages([], q.images);
+  }
+
+  function _buildCombinedContextText(rawContextText, textFiles) {
+    const parts = [];
+    if (typeof rawContextText === 'string' && rawContextText.trim().length > 0) {
+      parts.push(rawContextText.trim());
+    }
+    if (Array.isArray(textFiles)) {
+      for (const f of textFiles) {
+        if (f && typeof f.content === 'string' && f.content.trim().length > 0) {
+          parts.push(f.content.trim());
+        }
+      }
+    }
+    return parts.join('\n\n');
+  }
 
   // ─── F-INT-03 : Presets de règles modulaires par domaine ───
   const DOMAIN_PRESETS = Object.freeze({
@@ -459,8 +565,9 @@ const BackgroundAgent = (() => {
   function _formatQuestionForPrompt(q, displayNumber, opts = {}) {
     if (!q || typeof q !== 'object') return '';
     let out = `Question ${displayNumber}: ${q.text || ''}\n`;
-    if (opts.includeImageNote && Array.isArray(q.images) && q.images.length > 0) {
-      out += `  [${q.images.length} image(s) jointe(s) pour cette question]\n`;
+    const validImages = opts.includeImageNote ? _getValidQuestionImages(q) : [];
+    if (validImages.length > 0) {
+      out += `  [${validImages.length} image(s) jointe(s) pour cette question]\n`;
     }
 
     const meta = _getNormalizedQuestionMeta(q);
@@ -682,7 +789,7 @@ const BackgroundAgent = (() => {
   /**
    * Construit le prompt ciblé de vérification pour une question unique.
    */
-  function _buildVerificationPrompt(question, baseContextText, searchEvidence, settings) {
+  function _buildVerificationPrompt(question, baseContextText, searchEvidence, settings, contextImages = []) {
     let sys = 'You are an independent quiz verification reviewer. Analyze the single question carefully and output ONLY a valid <quiz_answers> XML block with <answer question_id="1" type="..."><confidence>0-100</confidence><explanation>brief plain-text rationale</explanation></answer>.';
     const domainRulesText = buildDomainRules(
       settings?.domainPreset || 'auto',
@@ -694,6 +801,10 @@ const BackgroundAgent = (() => {
     let usr = '';
     if (baseContextText && typeof baseContextText === 'string' && baseContextText.trim().length > 0) {
       usr += `CONTEXT:\n${baseContextText.trim().slice(0, 2000)}\n\n`;
+    }
+    if (Array.isArray(contextImages) && contextImages.length > 0) {
+      const names = contextImages.map(img => (img && img.name) ? img.name : 'image').join(', ');
+      usr += `COURSE NOTE IMAGES: ${contextImages.length} course reference image(s) are attached first (${names}). Use them as primary reference.\n\n`;
     }
     if (searchEvidence && typeof searchEvidence === 'string' && searchEvidence.trim().length > 0) {
       usr += `WEB EVIDENCE:\n${searchEvidence.trim().slice(0, 1500)}\n\n`;
@@ -822,6 +933,9 @@ const BackgroundAgent = (() => {
 
     const llmCaller = hasLLMOverride ? context.callLLM : _callLLMWithTools;
     const searchCaller = typeof context?.searchFn === 'function' ? context.searchFn : _executeSingleSearch;
+    const contextImages = Array.isArray(context?.contextImages)
+      ? _mergeRequestImages(context.contextImages, [])
+      : _extractContextMedia(syncConfig.contextFiles).imageFiles;
 
     try {
       for (const idx of candidateIndices) {
@@ -873,7 +987,8 @@ const BackgroundAgent = (() => {
           const prompts = _buildVerificationPrompt(singleQ, context?.baseContextText || '', searchEvidence, {
             ...syncConfig,
             ...settings
-          });
+          }, contextImages);
+          const verifyImages = _mergeRequestImages(contextImages, q.images || []);
 
           let secAns = null;
           let usedProvider = null;
@@ -883,7 +998,7 @@ const BackgroundAgent = (() => {
               break;
             }
             try {
-              const hasImages = Array.isArray(q.images) && q.images.length > 0;
+              const hasImages = verifyImages.length > 0;
               const modelId = (typeof QuizProviders !== 'undefined' && QuizProviders?.PROVIDERS &&
                 Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, secProvider))
                 ? QuizProviders.getModelForContext(secProvider, hasImages, syncConfig.customModels || {})
@@ -894,7 +1009,7 @@ const BackgroundAgent = (() => {
                 mergedConfig,
                 modelId,
                 messages,
-                q.images || [],
+                verifyImages,
                 [],
                 cvAbort.signal
               );
@@ -1008,16 +1123,17 @@ const BackgroundAgent = (() => {
       score += 2;
     }
 
-    // Images
-    const hasImages = task.questions.some(q => q.images && q.images.length > 0);
+    // Images (quiz ou notes de cours)
+    const syncConfig = task.config?.syncConfig || {};
+    const contextText = syncConfig.contextText || '';
+    const contextFiles = syncConfig.contextFiles || [];
+    const { imageFiles: contextImages } = _extractContextMedia(contextFiles);
+    const hasImages = task.questions.some(q => _getValidQuestionImages(q).length > 0) || contextImages.length > 0;
     if (hasImages) {
       score += 1;
     }
 
     // Contexte utilisateur
-    const syncConfig = task.config?.syncConfig || {};
-    const contextText = syncConfig.contextText || '';
-    const contextFiles = syncConfig.contextFiles || [];
     if (contextText.trim().length > 0 || contextFiles.length > 0) {
       score += 1;
     }
@@ -1089,35 +1205,29 @@ const BackgroundAgent = (() => {
     }
 
     // Contexte utilisateur
-    let baseContextText = syncConfig.contextText || '';
-    const contextFiles = syncConfig.contextFiles || [];
-    for (const f of contextFiles) {
-      baseContextText += (f.content || '');
-    }
+    const rawContextText = syncConfig.contextText || '';
+    const contextFiles = Array.isArray(syncConfig.contextFiles) ? syncConfig.contextFiles : [];
+    const { imageFiles: contextImages } = _extractContextMedia(contextFiles);
 
+    const questionImages = [];
+    for (const q of task.questions) {
+      for (const img of _getValidQuestionImages(q)) {
+        questionImages.push(img);
+      }
+    }
+    const uniqueQuestionImages = _mergeRequestImages([], questionImages);
     const quizData = {
       questions: task.questions,
-      totalImages: task.questions.reduce((acc, q) => acc + (q.images ? q.images.length : 0), 0)
+      totalImages: uniqueQuestionImages.length
     };
+    const allImages = _mergeRequestImages(contextImages, uniqueQuestionImages);
 
-    const hasImages = quizData.totalImages > 0;
+    const hasImages = allImages.length > 0;
     const modelId = QuizProviders.getModelForContext(providerKey, hasImages, (syncConfig.customModels || {}));
 
     _log(journal, 'fast_path_start', `Démarrage Fast Path avec ${providerKey} (${modelId})`);
 
-    const initialPrompts = await _buildPrompt(quizData, baseContextText, contextFiles, { ...syncConfig, ...settings });
-
-    // Rassembler toutes les images
-    const allImages = [];
-    for (const q of task.questions) {
-      if (q.images) {
-        for (const img of q.images) {
-          if (!allImages.some(item => item.dataUrl === img.dataUrl)) {
-            allImages.push(img);
-          }
-        }
-      }
-    }
+    const initialPrompts = await _buildPrompt(quizData, rawContextText, contextFiles, { ...syncConfig, ...settings });
 
     // Messages pour le provider
     const messages = _initHistory(providerKey, initialPrompts.system, initialPrompts.user);
@@ -1230,7 +1340,10 @@ const BackgroundAgent = (() => {
         }
         if (typeof chrome !== 'undefined' && chrome.storage) {
           try {
-            const localReadKeys = isServiceWorkerCtx ? [...intelKeys, 'providerConfigs'] : intelKeys;
+            const needContextFiles = effectiveSyncConfig.contextFiles === undefined;
+            const localReadKeys = isServiceWorkerCtx
+              ? [...intelKeys, 'providerConfigs', ...(needContextFiles ? ['contextFiles'] : [])]
+              : [...intelKeys, ...(needContextFiles ? ['contextFiles'] : [])];
             const localData = (chrome.storage.local && typeof chrome.storage.local.get === 'function')
               ? await chrome.storage.local.get(localReadKeys)
               : {};
@@ -1242,6 +1355,9 @@ const BackgroundAgent = (() => {
               if (effectiveSyncConfig[k] === undefined && settings[k] === undefined && mergedStored[k] !== undefined) {
                 effectiveSyncConfig[k] = mergedStored[k];
               }
+            }
+            if (needContextFiles && Array.isArray(localData?.contextFiles)) {
+              effectiveSyncConfig.contextFiles = localData.contextFiles;
             }
             if (isServiceWorkerCtx) {
               const trustedCfgs = (localData && localData.providerConfigs && typeof localData.providerConfigs === 'object')
@@ -1272,14 +1388,13 @@ const BackgroundAgent = (() => {
           let finalFastAnswers = (fastResult.answers || []).map(normalizeAnswerEntry);
           if (crossValidationEnabled && !globalAbort.signal.aborted) {
             _reportProgress(task.tabId, 'Double vérification…', 90);
-            let fastContextText = effectiveSyncConfig.contextText || '';
-            for (const f of (effectiveSyncConfig.contextFiles || [])) {
-              fastContextText += (f.content || '');
-            }
+            const { textFiles: fastTextFiles, imageFiles: fastContextImages } = _extractContextMedia(effectiveSyncConfig.contextFiles);
+            const fastContextText = _buildCombinedContextText(effectiveSyncConfig.contextText || '', fastTextFiles);
             finalFastAnswers = await crossValidateAnswers(finalFastAnswers, task.questions, {
               primaryProvider: fastResult.metadata?.provider || null,
               config: effectiveConfig,
               baseContextText: fastContextText,
+              contextImages: fastContextImages,
               journal,
               signal: globalAbort.signal
             });
@@ -1299,9 +1414,11 @@ const BackgroundAgent = (() => {
       const plan = await _planStrategy(effectiveTask, journal, globalAbort.signal);
       _reportProgress(task.tabId, 'Découpage des questions…', 20);
 
-      // Contexte de base : baseContextText
+      // Contexte de base : texte brut + texte combiné pour cross-validation
+      const rawContextText = plan.rawContextText !== undefined ? plan.rawContextText : plan.baseContextText;
       const baseContextText = plan.baseContextText;
       const contextFiles = plan.contextFiles;
+      const contextImages = Array.isArray(plan.contextImages) ? plan.contextImages : [];
 
       let allParsedAnswers = [];
       let searchQueriesRun = 0;
@@ -1340,7 +1457,7 @@ const BackgroundAgent = (() => {
             chunkResult = await _executeReActLoop(
               effectiveTask,
               chunk,
-              baseContextText,
+              rawContextText,
               contextFiles,
               pKey,
               journal,
@@ -1385,7 +1502,7 @@ const BackgroundAgent = (() => {
       const validated = await _validateAndRetry(
         effectiveTask,
         { answers: cleanedAnswers, provider: providerKey, model: lastUsedModel, chunksProcessed: plan.chunks.length },
-        baseContextText,
+        rawContextText,
         plan,
         journal,
         globalAbort.signal
@@ -1398,6 +1515,7 @@ const BackgroundAgent = (() => {
           primaryProvider: providerKey,
           config: effectiveConfig,
           baseContextText,
+          contextImages,
           journal,
           signal: globalAbort.signal
         });
@@ -1521,24 +1639,26 @@ const BackgroundAgent = (() => {
       }
     }
 
-    // Base context text + files
-    let baseContextText = syncConfig.contextText || '';
-    const contextFiles = syncConfig.contextFiles || [];
-    for (const f of contextFiles) {
-      baseContextText += (f.content || '');
-    }
-    const baseTokens = _estimateTokens(baseContextText);
+    // Base context text + files + images
+    const rawContextText = syncConfig.contextText || '';
+    const contextFiles = Array.isArray(syncConfig.contextFiles) ? syncConfig.contextFiles : [];
+    const { textFiles, imageFiles: contextImages } = _extractContextMedia(contextFiles);
+    const fullContextText = _buildCombinedContextText(rawContextText, textFiles);
+    const contextImageTokens = contextImages.reduce((acc, img) => acc + _estimateImageTokens(img), 0);
+    const baseTokens = _estimateTokens(fullContextText) + contextImageTokens;
 
     // Découper en chunks
-    const chunks = _createQuizChunks(task.questions, providerKey, baseTokens, syncConfig);
+    const chunks = _createQuizChunks(task.questions, providerKey, baseTokens, syncConfig, contextImages.length > 0);
 
     // Stratégie dérivée directement de la configuration utilisateur (pas d'appel LLM préliminaire)
     const strategy = { useSearch: syncConfig.agenticSearch === true, analysis: 'standard' };
 
     const plan = {
       providerKey,
-      baseContextText,
+      rawContextText,
+      baseContextText: fullContextText,
       contextFiles,
+      contextImages,
       baseTokens,
       chunks,
       strategy
@@ -1557,17 +1677,27 @@ const BackgroundAgent = (() => {
    *
    * @param {Object} task
    * @param {Object} chunk
-   * @param {string} baseContextText
+   * @param {string} rawContextText
    * @param {Array} contextFiles
    * @param {string} providerKey
    * @param {Array} journal
    * @param {AbortSignal} signal
    * @returns {Promise<{answers: Array, searchCount: number, model: string}>}
    */
-  async function _executeReActLoop(task, chunk, baseContextText, contextFiles, providerKey, journal, signal) {
+  async function _executeReActLoop(task, chunk, rawContextText, contextFiles, providerKey, journal, signal) {
     const config = task.config;
     const syncConfig = config.syncConfig;
-    const modelId = QuizProviders.getModelForContext(providerKey, chunk.isVisionBucket, (syncConfig.customModels || {}));
+    const { imageFiles: contextImages } = _extractContextMedia(contextFiles);
+    const chunkQuestionImages = [];
+    for (const q of chunk.questions) {
+      for (const img of _getValidQuestionImages(q)) {
+        chunkQuestionImages.push(img);
+      }
+    }
+    const uniqueChunkQuestionImages = _mergeRequestImages([], chunkQuestionImages);
+    const allImages = _mergeRequestImages(contextImages, uniqueChunkQuestionImages);
+    const requiresVision = allImages.length > 0;
+    const modelId = QuizProviders.getModelForContext(providerKey, requiresVision, (syncConfig.customModels || {}));
 
     const searchEnabled = syncConfig.agenticSearch === true &&
                           typeof syncConfig.serpApiKey === 'string' &&
@@ -1576,10 +1706,10 @@ const BackgroundAgent = (() => {
 
     const chunkQuizData = {
       questions: chunk.questions,
-      totalImages: chunk.images
+      totalImages: uniqueChunkQuestionImages.length
     };
 
-    const initialPrompts = await _buildPrompt(chunkQuizData, baseContextText, contextFiles, {
+    const initialPrompts = await _buildPrompt(chunkQuizData, rawContextText, contextFiles, {
       ...(syncConfig || {}),
       ...(config.settings || {})
     });
@@ -1647,18 +1777,6 @@ const BackgroundAgent = (() => {
 
     // Initialiser l'historique des messages selon le provider
     let messages = _initHistory(providerKey, initialPrompts.system, initialPrompts.user);
-
-    // Images à joindre
-    const allImages = [];
-    for (const q of chunk.questions) {
-      if (q.images) {
-        for (const img of q.images) {
-          if (!allImages.some(item => item.dataUrl === img.dataUrl)) {
-            allImages.push(img);
-          }
-        }
-      }
-    }
 
     let turn = 0;
     let searchCount = 0;
@@ -2074,7 +2192,8 @@ const BackgroundAgent = (() => {
     }
     const providerType = _getProviderType(normalizedKey);
 
-    const hasImages = images && images.length > 0;
+    const validImages = _mergeRequestImages([], images);
+    const hasImages = validImages.length > 0;
     const providerModelsObj = hasImages ? (provider.visionModels || []) : (provider.textModels || []);
     const candidateModels = [model];
     for (const m of providerModelsObj) {
@@ -2094,11 +2213,11 @@ const BackgroundAgent = (() => {
         }
         let result;
         if (providerType === 'gemini') {
-          result = await _callGeminiWithTools(apiKey, candidateModel, history, images, tools, signal);
+          result = await _callGeminiWithTools(apiKey, candidateModel, history, validImages, tools, signal);
         } else if (providerType === 'claude') {
-          result = await _callClaudeWithTools(apiKey, candidateModel, history, images, tools, signal, normalizedKey, providerConfig);
+          result = await _callClaudeWithTools(apiKey, candidateModel, history, validImages, tools, signal, normalizedKey, providerConfig);
         } else {
-          result = await _callOpenAIWithTools(normalizedKey, apiKey, candidateModel, history, images, tools, signal, providerConfig);
+          result = await _callOpenAIWithTools(normalizedKey, apiKey, candidateModel, history, validImages, tools, signal, providerConfig);
         }
         if (analytics && typeof analytics.record === 'function') {
           analytics.record({
@@ -2158,7 +2277,8 @@ const BackgroundAgent = (() => {
     }
 
     // Gérer l'intégration d'images dans le premier message user (après un éventuel message system)
-    if (images && images.length > 0 && payload.messages.length > 0) {
+    const validImages = _mergeRequestImages([], images);
+    if (validImages.length > 0 && payload.messages.length > 0) {
       const firstUserIdx = payload.messages.findIndex(m => m.role === 'user');
       if (firstUserIdx !== -1) {
         const originalUserText = typeof payload.messages[firstUserIdx].content === 'string'
@@ -2169,16 +2289,22 @@ const BackgroundAgent = (() => {
         payload.messages = JSON.parse(JSON.stringify(payload.messages)); // deep copy
 
         if (isLegacyNvidiaVision) {
-          const imgTags = images.map(img => `<img src="${img.dataUrl}" />`).join(' ');
+          const imgTags = validImages
+            .map(img => {
+              const parsed = _parseImageDataUrl(img.dataUrl);
+              return parsed ? `<img src="data:${parsed.mimeType};base64,${parsed.base64}" />` : '';
+            })
+            .filter(Boolean)
+            .join(' ');
           payload.messages[firstUserIdx].content = `${originalUserText}\n${imgTags}`;
         } else {
           const mixedContent = [];
-          images.forEach(img => {
-            const base64Data = img.dataUrl.split(',')[1];
-            const mediaType = img.mimeType || 'image/jpeg';
+          validImages.forEach(img => {
+            const parsed = _parseImageDataUrl(img.dataUrl);
+            if (!parsed) return;
             mixedContent.push({
               type: 'image_url',
-              image_url: { url: `data:${mediaType};base64,${base64Data}` }
+              image_url: { url: `data:${parsed.mimeType};base64,${parsed.base64}` }
             });
           });
           mixedContent.push({ type: 'text', text: originalUserText });
@@ -2244,20 +2370,21 @@ const BackgroundAgent = (() => {
 
     const messagesToSend = JSON.parse(JSON.stringify(history.messages));
 
-    if (images && images.length > 0 && messagesToSend.length > 0 && messagesToSend[0].role === 'user') {
+    const validImages = _mergeRequestImages([], images);
+    if (validImages.length > 0 && messagesToSend.length > 0 && messagesToSend[0].role === 'user') {
       const originalUserText = typeof messagesToSend[0].content === 'string'
         ? messagesToSend[0].content
         : '';
       const blocks = [];
-      images.forEach(img => {
-        const base64Data = img.dataUrl.split(',')[1];
-        const mediaType = img.mimeType || 'image/jpeg';
+      validImages.forEach(img => {
+        const parsed = _parseImageDataUrl(img.dataUrl);
+        if (!parsed) return;
         blocks.push({
           type: 'image',
           source: {
             type: 'base64',
-            media_type: mediaType,
-            data: base64Data
+            media_type: parsed.mimeType,
+            data: parsed.base64
           }
         });
       });
@@ -2336,16 +2463,17 @@ const BackgroundAgent = (() => {
 
     const contentsToSend = JSON.parse(JSON.stringify(history.contents));
 
-    if (images && images.length > 0 && contentsToSend.length > 0 && contentsToSend[0].role === 'user') {
+    const validImages = _mergeRequestImages([], images);
+    if (validImages.length > 0 && contentsToSend.length > 0 && contentsToSend[0].role === 'user') {
       const originalUserText = contentsToSend[0].parts[0]?.text || '';
       const parts = [];
-      images.forEach(img => {
-        const base64Data = img.dataUrl.split(',')[1];
-        const mediaType = img.mimeType || 'image/jpeg';
+      validImages.forEach(img => {
+        const parsed = _parseImageDataUrl(img.dataUrl);
+        if (!parsed) return;
         parts.push({
           inlineData: {
-            mimeType: mediaType,
-            data: base64Data
+            mimeType: parsed.mimeType,
+            data: parsed.base64
           }
         });
       });
@@ -2563,14 +2691,21 @@ const BackgroundAgent = (() => {
   // RALPH LOOP (Validation & Retry)
   // ────────────────────────────────────────────────
 
-  async function _validateAndRetry(task, llmResult, baseContextText, plan, journal, signal) {
+  async function _validateAndRetry(task, llmResult, rawContextText, plan, journal, signal) {
     let { answers, provider, model, chunksProcessed } = llmResult;
     const MAX_RETRIES = 2;
     let retriesUsed = 0;
 
     const getQIdx = (q, pos) => (typeof q.index === 'number' ? q.index - 1 : pos);
-    const answeredIndices = new Set(answers.map(ans => ans.questionIndex));
-    let missingQuestions = task.questions.filter((q, pos) => !answeredIndices.has(getQIdx(q, pos)));
+    const answerByQIdx = new Map();
+    for (const ans of (Array.isArray(answers) ? answers : [])) {
+      if (ans && typeof ans.questionIndex === 'number') {
+        answerByQIdx.set(ans.questionIndex, ans);
+      }
+    }
+    let missingQuestions = task.questions.filter((q, pos) => !answerByQIdx.has(getQIdx(q, pos)));
+    const contextFiles = Array.isArray(plan?.contextFiles) ? plan.contextFiles : [];
+    const { imageFiles: contextImages } = _extractContextMedia(contextFiles);
 
     while (missingQuestions.length > 0 && retriesUsed < MAX_RETRIES) {
       if (signal.aborted) {
@@ -2581,9 +2716,17 @@ const BackgroundAgent = (() => {
       _log(journal, 'ralph_retry', `Ralph Loop: ${missingQuestions.length} questions manquantes, retry ${retriesUsed}/${MAX_RETRIES}`);
       _reportProgress(task.tabId, `Vérification de ${missingQuestions.length} question(s) (${retriesUsed}/${MAX_RETRIES})…`, 85);
 
+      const missingQuestionImages = [];
+      for (const q of missingQuestions) {
+        for (const img of _getValidQuestionImages(q)) {
+          missingQuestionImages.push(img);
+        }
+      }
+      const uniqueMissingQuestionImages = _mergeRequestImages([], missingQuestionImages);
+
       const retryQuizData = {
         questions: missingQuestions,
-        totalImages: missingQuestions.reduce((acc, q) => acc + (q.images ? q.images.length : 0), 0)
+        totalImages: uniqueMissingQuestionImages.length
       };
 
       try {
@@ -2594,25 +2737,16 @@ const BackgroundAgent = (() => {
 
         for (const pKey of attemptProviders) {
           try {
-            const initialPrompts = await _buildPrompt(retryQuizData, baseContextText, plan.contextFiles, {
+            const initialPrompts = await _buildPrompt(retryQuizData, rawContextText, contextFiles, {
               ...(syncConfig || {}),
               ...(task.config.settings || {}),
               isRetry: true
             });
             const messages = _initHistory(pKey, initialPrompts.system, initialPrompts.user);
 
-            const retryImages = [];
-            for (const q of missingQuestions) {
-              if (q.images) {
-                for (const img of q.images) {
-                  if (!retryImages.some(item => item.dataUrl === img.dataUrl)) {
-                    retryImages.push(img);
-                  }
-                }
-              }
-            }
+            const retryImages = _mergeRequestImages(contextImages, uniqueMissingQuestionImages);
 
-            const currentModel = QuizProviders.getModelForContext(pKey, retryQuizData.totalImages > 0, (syncConfig.customModels || {}));
+            const currentModel = QuizProviders.getModelForContext(pKey, retryImages.length > 0, (syncConfig.customModels || {}));
 
             // Pour les retries, on fait un appel direct simple (pas de boucle ReAct pour aller vite)
             response = await _callLLMWithTools(
@@ -2644,12 +2778,11 @@ const BackgroundAgent = (() => {
 
         for (const ans of retryAnswers) {
           if (ans && typeof ans.questionIndex === 'number') {
-            answers[ans.questionIndex] = ans;
+            answerByQIdx.set(ans.questionIndex, ans);
           }
         }
 
-        const newAnsweredIndices = new Set(answers.map(ans => ans.questionIndex));
-        missingQuestions = task.questions.filter((q, pos) => !newAnsweredIndices.has(getQIdx(q, pos)));
+        missingQuestions = task.questions.filter((q, pos) => !answerByQIdx.has(getQIdx(q, pos)));
       } catch (retryError) {
         _log(journal, 'ralph_fail', `Retry ${retriesUsed} échoué: ${retryError.message}`);
         break;
@@ -2660,7 +2793,11 @@ const BackgroundAgent = (() => {
       _log(journal, 'ralph_incomplete', `${missingQuestions.length} question(s) sans réponse après ${retriesUsed} retries`);
     }
 
-    return { answers: answers.filter(a => a !== undefined), provider, model, retriesUsed, chunksProcessed };
+    const mergedAnswers = Array.from(answerByQIdx.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([, ans]) => ans);
+
+    return { answers: mergedAnswers, provider, model, retriesUsed, chunksProcessed };
   }
 
   // ────────────────────────────────────────────────
@@ -2673,7 +2810,13 @@ const BackgroundAgent = (() => {
 
   function _estimateImageTokens(image) {
     if (!image || !image.dataUrl) { return 0; }
-    return Math.ceil(image.dataUrl.length / 4);
+    if (
+      typeof image.width === 'number' && Number.isFinite(image.width) && image.width > 0 &&
+      typeof image.height === 'number' && Number.isFinite(image.height) && image.height > 0
+    ) {
+      return Math.max(256, Math.min(2500, Math.ceil((image.width * image.height) / 750)));
+    }
+    return 1500;
   }
 
   async function _loadSystemPrompt() {
@@ -2747,20 +2890,33 @@ const BackgroundAgent = (() => {
       });
     }
 
+    const { textFiles, imageFiles } = _extractContextMedia(contextFiles);
     let userPrompt = '';
 
-    if (contextText) {
+    if (typeof contextText === 'string' && contextText.trim().length > 0) {
       userPrompt += `CONTEXTE FOURNI (Texte):\n${contextText}\n\n`;
     }
 
-    if (contextFiles && contextFiles.length > 0) {
+    if (textFiles.length > 0) {
       userPrompt += `CONTEXTE FOURNI (Fichiers):\n`;
-      for (const file of contextFiles) {
-        userPrompt += `--- Fichier: ${file.name} ---\n${file.content}\n\n`;
+      for (const file of textFiles) {
+        userPrompt += `--- Fichier: ${file.name || 'document'} ---\n${file.content}\n\n`;
       }
     }
 
-    if (quizData.totalImages > 0) {
+    if (imageFiles.length > 0) {
+      userPrompt += `CONTEXTE FOURNI (Images de cours — ${imageFiles.length} image(s) jointe(s) en premier):\n`;
+      for (let i = 0; i < imageFiles.length; i++) {
+        userPrompt += `- Image de cours ${i + 1} : ${imageFiles[i].name}\n`;
+      }
+      userPrompt += `Appuie-toi prioritairement sur ces images de cours (schémas, tableaux, formules, notes) pour répondre aux questions.\n\n`;
+    }
+
+    if (imageFiles.length > 0 && quizData.totalImages > 0) {
+      userPrompt += `NOTE: ${imageFiles.length} image(s) de cours sont jointes en premier, suivies de ${quizData.totalImages} image(s) issues des questions du quiz. Analyse-les attentivement.\n\n`;
+    } else if (imageFiles.length > 0) {
+      userPrompt += `NOTE: Des images de notes de cours sont jointes à ce message. Analyse-les attentivement pour répondre aux questions.\n\n`;
+    } else if (quizData.totalImages > 0) {
       userPrompt += `NOTE: Des images sont jointes à ce message. Analyse-les attentivement.\n\n`;
     }
 
@@ -2779,19 +2935,9 @@ const BackgroundAgent = (() => {
     return { system: systemPrompt, user: userPrompt };
   }
 
-  function _createQuizChunks(questions, providerKey, baseTokens, syncConfig) {
+  function _createQuizChunks(questions, providerKey, baseTokens, syncConfig, hasContextImages = false) {
     if (!Array.isArray(questions)) {
       throw new Error('_createQuizChunks: questions doit être un tableau.');
-    }
-    const textQuestions = [];
-    const visionQuestions = [];
-
-    for (const q of questions) {
-      if (q.images && q.images.length > 0) {
-        visionQuestions.push(q);
-      } else {
-        textQuestions.push(q);
-      }
     }
 
     const buildChunksForList = (questionsList, isVisionBucket) => {
@@ -2824,10 +2970,9 @@ const BackgroundAgent = (() => {
             qTokens += _estimateTokens((dt && (dt.label || dt.text)) || '');
           }
         }
-        if (q.images) {
-          for (const img of q.images) {
-            qTokens += _estimateImageTokens(img);
-          }
+        const validQImages = _getValidQuestionImages(q);
+        for (const img of validQImages) {
+          qTokens += _estimateImageTokens(img);
         }
 
         if (currentChunk.tokens + qTokens > MAX_CHUNK_TOKENS && currentChunk.questions.length > 0) {
@@ -2837,12 +2982,27 @@ const BackgroundAgent = (() => {
 
         currentChunk.questions.push(q);
         currentChunk.tokens += qTokens;
-        if (q.images) { currentChunk.images += q.images.length; }
+        currentChunk.images += validQImages.length;
       }
       if (currentChunk.questions.length > 0) { chunks.push(currentChunk); }
 
       return chunks;
     };
+
+    if (hasContextImages) {
+      return buildChunksForList(questions, true);
+    }
+
+    const textQuestions = [];
+    const visionQuestions = [];
+
+    for (const q of questions) {
+      if (_getValidQuestionImages(q).length > 0) {
+        visionQuestions.push(q);
+      } else {
+        textQuestions.push(q);
+      }
+    }
 
     return [
       ...buildChunksForList(textQuestions, false),
@@ -3321,7 +3481,11 @@ const BackgroundAgent = (() => {
     _parseAIResponse,
     _callLLMWithTools,
     _answersAgree,
-    _mapToolAnswersToParsedAnswers
+    _mapToolAnswersToParsedAnswers,
+    _extractContextMedia,
+    _mergeRequestImages,
+    _estimateImageTokens,
+    _createQuizChunks
   };
 })();
 
@@ -3348,6 +3512,10 @@ if (typeof module !== 'undefined' && module.exports) {
     _parseAIResponse: BackgroundAgent._parseAIResponse,
     _callLLMWithTools: BackgroundAgent._callLLMWithTools,
     _answersAgree: BackgroundAgent._answersAgree,
-    _mapToolAnswersToParsedAnswers: BackgroundAgent._mapToolAnswersToParsedAnswers
+    _mapToolAnswersToParsedAnswers: BackgroundAgent._mapToolAnswersToParsedAnswers,
+    _extractContextMedia: BackgroundAgent._extractContextMedia,
+    _mergeRequestImages: BackgroundAgent._mergeRequestImages,
+    _estimateImageTokens: BackgroundAgent._estimateImageTokens,
+    _createQuizChunks: BackgroundAgent._createQuizChunks
   };
 }

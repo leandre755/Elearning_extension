@@ -184,12 +184,15 @@ test('F-CTX-04: parseCSV parses quoted fields, escaped quotes (""), embedded com
   );
 });
 
-test('Settings wiring: settings.html loads nlp-cleaner.js before settings.js and exposes all required Wave 1/2 controls', () => {
+test('Settings wiring: settings.html loads nlp-cleaner.js & course-media.js before settings.js and exposes all required Wave 1/2 controls', () => {
   const html = fs.readFileSync(path.join(TARGET_ROOT, 'settings.html'), 'utf8');
   const nlpIdx = html.indexOf('<script src="nlp-cleaner.js"></script>');
+  const mediaIdx = html.indexOf('<script src="course-media.js"></script>');
   const settingsIdx = html.indexOf('<script src="settings.js"></script>');
   assert.ok(nlpIdx > 0 && settingsIdx > nlpIdx, 'nlp-cleaner.js must be loaded before settings.js in settings.html');
-  assert.match(html, /accept="\.pdf,\.docx,\.txt,\.md,\.html,\.htm,\.csv"/);
+  assert.ok(mediaIdx > 0 && settingsIdx > mediaIdx, 'course-media.js must be loaded before settings.js in settings.html');
+  assert.match(html, /accept="\.pdf,\.docx,\.txt,\.md,\.html,\.htm,\.csv,\.png,\.jpg,\.jpeg,\.webp,\.gif,image\/png,image\/jpeg,image\/webp,image\/gif"/);
+  assert.doesNotMatch(html, /accept="[^"]*\.svg/i);
 
   for (const id of [
     'domainPreset',

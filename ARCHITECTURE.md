@@ -10,7 +10,7 @@ Page Web
        │ détecte l'activation et demande l'injection au service worker
        ▼
 background.js (Service Worker MV3)
-  ├─ importScripts('providers.js', 'background-agent.js')
+  ├─ importScripts('provider-catalog.js', 'course-media.js', 'providers.js', 'background-agent.js')
   ├─ injectCoreScripts(tabId)  [mutex _injectionsInProgress]
   │    └─ injecte séquentiellement dans la page :
   │         providers.js → schema-cache.js → schema-detector.js
@@ -33,6 +33,7 @@ background.js (Service Worker MV3)
 | `dom-extractor.js` | Extraction sémantique des questions/options (Shadow DOM récursif, 6 formats universels), capture d'images et handshake `CustomEvent` avec `page-bridge.js` | Content script |
 | `page-bridge.js` | Pont `MAIN` world injecté uniquement à la demande (`injectPageBridge`) : introspection défensive React/Vue et intercepteur réseau Fetch/XHR opt-in sans empreinte globale | Page `MAIN` world (on-demand) |
 | `nlp-cleaner.js` | Pipeline de normalisation typographique, dé-duplication d'en-têtes/pieds de page et extraction multi-format (`.txt`, `.md`, `.html`, `.csv`) | Options extension |
+| `course-media.js` | Validation (magic bytes / dataUrl raster), redimensionnement/budget et fusion multimodale des images de notes de cours (`PNG`, `JPEG`, `WebP`, `GIF`) | Service worker & Options |
 | `highlight-manager.js` | Surlignage furtif et badges de confiance (métadonnées en `WeakMap`, `_styleTagId` aléatoire par session, support Shadow DOM, suspension des observers pour l'Auto-Heal, fallback `document.head`) | Content script |
 | `content.js` | Orchestrateur côté page, pré-chauffage `preWarmProviders`, auto-submit opt-in (`F-AUTO-03`) + parseur multi-stratégies de réponses XML `<quiz_answers>` | Content script |
 | `content.css` | Styles injectés de base | Content script |

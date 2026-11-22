@@ -250,3 +250,28 @@
     - Suite complète `node --test --test-concurrency=1 tests/*.test.js` : `125/125 PASS` (`0` fail).
     - Playwright Chrome E2E (`verify_ui.py`) : `PLAYWRIGHT_OK {'total_cards': 41, 'configured_after_reload': 4, 'priority_items': 4, 'override_cards': 4, 'popup_status': '4 clés'}` (`4` locaux, `37` cloud, `#card-fcc_local` testé et persisté).
 -[Antigravity-app, Gemini 4 Argon, medium]
+
+### Run: Images raster (`PNG`, `JPEG`, `WebP`, `GIF`) dans Notes de cours — Mode Vision direct (`course-media.js`, `settings.*`, `background-agent.js`)
+- **Date**: 2026-11-22
+- **Target**: `course-media.js`, `background.js`, `background-agent.js`, `settings.html`, `settings.css`, `settings.js`, `tests/course-media.test.js`, `tests/nlp-cleaner.test.js`
+- **Status**: PASS
+- **Output / Evidence**:
+  - **Syntaxe & Quality Gate (`bash .githooks/pre-commit` staged + `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit`)** : `7/7 ✅` (`exit 0`, incluant `gitleaks git --staged`, suppression ban, `node --check`, Semgrep `.semgrep/rules.yml`, `tests/invariants.test.js`).
+  - **Suite complète (`node --test --test-concurrency=1 tests/*.test.js`)** :
+    ```text
+    ℹ tests 138
+    ℹ suites 0
+    ℹ pass 138
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+    ℹ todo 0
+    ℹ duration_ms 20913.950436
+    ```
+    (`13` tests dans `tests/course-media.test.js` couvrant `CourseMedia`, `_buildPrompt`, `_estimateImageTokens`, `_createQuizChunks`, Fast Path Gemini/Claude/Groq, ReAct + Ralph retry + Cross-Validation + SW hydration, rejet SVG/HTML spoofé, et `settings.js` DOM VM).
+  - **Vérification Chrome réel (Playwright `/bin/google-chrome`, thèmes Papier & Ardoise + CDP audits)** :
+    - PNG transparent `600×400` (`15 Ko`) + JPEG `2400×1600` redimensionné `1600×1067` (`46 Ko`), WebP `2000×1000` -> `1600×800`, GIF89a `1×1` -> PNG, fond `#FFFFFF` appliqué, `.file-thumb` fond `#FFFFFF` en mode Ardoise, rejet `.svg` et faux `.png` (`<svg>`), rejet `> 15 Mo`, drag-and-drop sans double ajout, persistance après `Enregistrer` + rechargement (`0` `pageerror`, `0` erreur console non-favicon).
+  - **Audits indépendants `antibug-reviewer` (contexte frais sur `git diff --cached`)** :
+    - Passe 1 (`2deb663c`) : 3 constats (`gitleaks` sur faux token de test `tests/course-media.test.js:260`, écrasement `answers[ans.questionIndex]` dans `_validateAndRetry` `background-agent.js:2771`, comptage brut de `q.images` SVG dans `background-agent.js`) + observation `Buffer` ESLint → tous corrigés avec tests de non-régression.
+    - Passe 2 (`e1063e70`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+-[Antigravity, Gemini 4 Neon, XHigh]

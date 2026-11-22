@@ -68,7 +68,7 @@ Ce document sert de tracker séparé pour suivre l'état d'implémentation des f
   - *Description* : Extraction des slides, notes et transcriptions de la plateforme d'apprentissage hôte.
 - [x] **F-CTX-04 : Import Multi-Format Avancé**
   - *Description* : Extraction de documents de formats variés (EPUB, PPTX, Notion, YouTube, Audio, etc.).
-  - *État actuel* : **Complètement implémenté (formats documentaires texte/web/tableaux)**. Outre PDF (`pdf.js`) et Word DOCX (`mammoth.js`), import et nettoyage NLP de `.txt`, `.md`, `.html`/`.htm` et `.csv` intégrés dans [settings.js](file:///home/omni/Code/Elearning_Ext/settings.js) et [nlp-cleaner.js](file:///home/omni/Code/Elearning_Ext/nlp-cleaner.js).
+  - *État actuel* : **Complètement implémenté (formats documentaires texte/web/tableaux + images de cours Vision)**. Outre PDF (`pdf.js`), Word DOCX (`mammoth.js`), `.txt`, `.md`, `.html`/`.htm` et `.csv` ([settings.js](file:///home/omni/Code/Elearning_Ext/settings.js), [nlp-cleaner.js](file:///home/omni/Code/Elearning_Ext/nlp-cleaner.js)), import et compression locale d'images raster (`PNG`, `JPEG`, `WebP`, `GIF`) via [course-media.js](file:///home/omni/Code/Elearning_Ext/course-media.js) pour envoi multimodal direct dans [background-agent.js](file:///home/omni/Code/Elearning_Ext/background-agent.js).
 
 ---
 

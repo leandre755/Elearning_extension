@@ -26,6 +26,7 @@ const elements = {
   fileInput: document.getElementById('fileInput'),
   fileUploadArea: document.getElementById('fileUploadArea'),
   fileList: document.getElementById('fileList'),
+  fileBudgetInfo: document.getElementById('fileBudgetInfo'),
 
   customQuestionSelector: document.getElementById('customQuestionSelector'),
   customAnswerSelector: document.getElementById('customAnswerSelector'),
@@ -89,6 +90,7 @@ function normalizeDomainPreset(value) {
 
 // État local
 let uploadedFiles = [];
+let _statusTimer = null;
 let providerOrder = ['groq', 'gemini', 'nvidia', 'mistral', 'claude'];
 let customModels = {};
 let providerConfigs = {};
@@ -764,9 +766,11 @@ async function loadSettings() {
     elements.showConfidenceBadge.checked = syncSettings.showConfidenceBadge !== false;
   }
 
-  if (localSettings.contextFiles) {
-    uploadedFiles = localSettings.contextFiles;
+  if (Array.isArray(localSettings.contextFiles)) {
+    uploadedFiles = localSettings.contextFiles.filter(f => f && typeof f === 'object');
     renderFileList();
+  } else {
+    updateFileBudgetUI();
   }
 
   // Wave 1 / Wave 2 settings (local storage, safe defaults)
@@ -1261,7 +1265,37 @@ function setupEventListeners() {
     });
   }
 
-  elements.fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+  if (elements.fileInput) {
+    elements.fileInput.addEventListener('change', (e) => {
+      const files = Array.from((e && e.target && e.target.files) || []);
+      if (e && e.target) e.target.value = '';
+      if (files.length > 0) return handleFiles(files);
+    });
+  }
+  if (elements.fileUploadArea) {
+    elements.fileUploadArea.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      elements.fileUploadArea.classList.add('drag-over');
+    });
+    elements.fileUploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      elements.fileUploadArea.classList.add('drag-over');
+    });
+    elements.fileUploadArea.addEventListener('dragleave', (e) => {
+      const related = e.relatedTarget;
+      if (!related || !elements.fileUploadArea.contains(related)) {
+        elements.fileUploadArea.classList.remove('drag-over');
+      }
+    });
+    elements.fileUploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      elements.fileUploadArea.classList.remove('drag-over');
+      const dropped = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      if (dropped.length > 0) return handleFiles(dropped);
+    });
+  }
   elements.saveBtn.addEventListener('click', saveSettings);
   elements.resetBtn.addEventListener('click', resetSettings);
 
@@ -1486,32 +1520,253 @@ async function testProvider(id, btn) {
   }
 }
 
+function _getCourseMedia() {
+  return (typeof globalThis !== 'undefined' && globalThis.CourseMedia)
+    ? globalThis.CourseMedia
+    : (typeof CourseMedia !== 'undefined' ? CourseMedia : null);
+}
+
+function updateFileBudgetUI() {
+  const budgetEl = elements.fileBudgetInfo;
+  if (!budgetEl) return;
+  if (!Array.isArray(uploadedFiles) || uploadedFiles.length === 0) {
+    budgetEl.textContent = '';
+    budgetEl.hidden = true;
+    return;
+  }
+
+  const media = _getCourseMedia();
+  const isImg = (f) => media && typeof media.isImageContextFile === 'function'
+    ? media.isImageContextFile(f)
+    : Boolean(f && f.kind === 'image' && typeof f.dataUrl === 'string');
+  const imageCount = uploadedFiles.filter(isImg).length;
+  const bytes = media && typeof media.estimateContextFilesBytes === 'function'
+    ? media.estimateContextFilesBytes(uploadedFiles)
+    : JSON.stringify(uploadedFiles).length;
+  const maxBytes = media && media.LIMITS ? media.LIMITS.TOTAL_CONTEXT_BUDGET_BYTES : Math.floor(4.5 * 1024 * 1024);
+  const fmt = (b) => (media && typeof media.formatFileSize === 'function') ? media.formatFileSize(b) : `${Math.round(b / 1024)} Ko`;
+
+  const fileLabel = `${uploadedFiles.length} fichier${uploadedFiles.length > 1 ? 's' : ''}`;
+  const imgSuffix = imageCount > 0 ? ` (${imageCount} image${imageCount > 1 ? 's' : ''})` : '';
+  budgetEl.textContent = `${fileLabel}${imgSuffix} · ${fmt(bytes)} / ${fmt(maxBytes)} — pensez à cliquer sur Enregistrer`;
+  budgetEl.hidden = false;
+}
+
+async function decodeImageSource(file) {
+  if (typeof createImageBitmap === 'function') {
+    const bitmap = await createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => {
+        if (typeof bitmap.close === 'function') {
+          try { bitmap.close(); } catch (_) { /* ignore */ }
+        }
+      }
+    };
+  }
+
+  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && typeof Image === 'function') {
+    const objectUrl = URL.createObjectURL(file);
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve({
+          source: img,
+          width: img.naturalWidth || img.width,
+          height: img.naturalHeight || img.height,
+          cleanup: () => {
+            try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
+          }
+        });
+      };
+      img.onerror = () => {
+        try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
+        reject(new Error('Impossible de décoder cette image.'));
+      };
+      img.src = objectUrl;
+    });
+  }
+
+  throw new Error('Décodage image indisponible dans cet environnement.');
+}
+
+async function compressCourseImage(file) {
+  const media = _getCourseMedia();
+  if (!media) {
+    throw new Error('Module CourseMedia non chargé.');
+  }
+
+  if (typeof file.size === 'number' && file.size > media.LIMITS.MAX_RAW_IMAGE_BYTES) {
+    throw new Error(`Image trop volumineuse (${media.formatFileSize(file.size)}, max 15 Mo).`);
+  }
+
+  const headSlice = typeof file.slice === 'function' ? file.slice(0, 16) : file;
+  const headBuf = await headSlice.arrayBuffer();
+  const detectedMime = media.sniffCourseImageMime(new Uint8Array(headBuf));
+  if (!detectedMime) {
+    throw new Error('Image invalide ou format non pris en charge.');
+  }
+
+  const decoded = await decodeImageSource(file);
+  const canvas = document.createElement('canvas');
+  try {
+    const initialDims = media.computeScaledDimensions(decoded.width, decoded.height, media.LIMITS.MAX_IMAGE_DIM);
+    if (!initialDims) {
+      throw new Error('Dimensions d\'image invalides.');
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Contexte graphique 2D indisponible.');
+    }
+
+    let finalDataUrl = '';
+    let finalWidth = initialDims.width;
+    let finalHeight = initialDims.height;
+
+    if (detectedMime === 'image/png' || detectedMime === 'image/gif') {
+      canvas.width = initialDims.width;
+      canvas.height = initialDims.height;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+      const pngCandidate = canvas.toDataURL('image/png');
+      if (pngCandidate.length <= media.LIMITS.PNG_KEEP_MAX_CHARS) {
+        finalDataUrl = pngCandidate;
+      }
+    }
+
+    if (!finalDataUrl) {
+      const steps = [
+        { maxDim: media.LIMITS.MAX_IMAGE_DIM, quality: 0.85 },
+        { maxDim: media.LIMITS.MAX_IMAGE_DIM, quality: 0.72 },
+        { maxDim: 1400, quality: 0.65 },
+        { maxDim: 1200, quality: 0.60 },
+        { maxDim: 960, quality: 0.55 }
+      ];
+      for (const step of steps) {
+        const dims = media.computeScaledDimensions(decoded.width, decoded.height, step.maxDim);
+        if (!dims) continue;
+        canvas.width = dims.width;
+        canvas.height = dims.height;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, dims.width, dims.height);
+        ctx.drawImage(decoded.source, 0, 0, dims.width, dims.height);
+        const jpegCandidate = canvas.toDataURL('image/jpeg', step.quality);
+        finalDataUrl = jpegCandidate;
+        finalWidth = dims.width;
+        finalHeight = dims.height;
+        if (jpegCandidate.length <= media.LIMITS.MAX_STORED_IMAGE_BYTES) {
+          break;
+        }
+      }
+    }
+
+    const parsed = media.parseImageDataUrl(finalDataUrl);
+    if (!parsed || finalDataUrl.length > media.LIMITS.MAX_STORED_IMAGE_BYTES) {
+      throw new Error('Image trop complexe ou volumineuse après compression.');
+    }
+
+    return {
+      kind: 'image',
+      name: file.name,
+      dataUrl: finalDataUrl,
+      mimeType: parsed.mimeType,
+      type: parsed.mimeType,
+      width: finalWidth,
+      height: finalHeight,
+      size: finalDataUrl.length,
+      originalSize: typeof file.size === 'number' ? file.size : finalDataUrl.length
+    };
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+    if (decoded && typeof decoded.cleanup === 'function') {
+      decoded.cleanup();
+    }
+  }
+}
+
 // Traiter les fichiers
 async function handleFiles(files) {
-  for (const file of files) {
+  const media = _getCourseMedia();
+  const fileList = Array.from(files || []);
+  if (fileList.length === 0) return;
+
+  let addedCount = 0;
+  let lastSuccessMsg = '';
+  const errors = [];
+
+  for (const file of fileList) {
     try {
-      const { text: content, stats } = await readFileWithStats(file);
-      if (content && content.trim().length > 0) {
-        uploadedFiles.push({
+      const kind = media && typeof media.classifyCourseFile === 'function'
+        ? media.classifyCourseFile(file)
+        : 'text';
+
+      if (kind === 'rejected_svg') {
+        errors.push(`Format SVG non pris en charge (utilisez PNG, JPEG, WebP ou GIF) : ${file.name}`);
+        continue;
+      }
+      if (kind === 'unsupported') {
+        errors.push(`Format de fichier non pris en charge : ${file.name}`);
+        continue;
+      }
+
+      let candidateEntry = null;
+      let successMsg = '';
+
+      if (kind === 'image') {
+        candidateEntry = await compressCourseImage(file);
+        successMsg = `Image ajoutée : ${file.name} (${candidateEntry.width}×${candidateEntry.height})`;
+      } else {
+        const { text: content, stats } = await readFileWithStats(file);
+        if (!content || content.trim().length === 0) {
+          errors.push(`Fichier vide ou illisible : ${file.name}`);
+          continue;
+        }
+        candidateEntry = {
           name: file.name,
           content: content,
           size: file.size,
           type: file.type,
           nlpStats: stats || null
-        });
+        };
         const pct = stats && stats.reductionRatio > 0
           ? ` (-${Math.round(stats.reductionRatio * 100)}% bruit)`
           : '';
-        showStatus(`Fichier ajouté : ${file.name}${pct}`, 'success');
-      } else {
-        showStatus(`Fichier vide ou illisible : ${file.name}`, 'error');
+        successMsg = `Fichier ajouté : ${file.name}${pct}`;
       }
+
+      if (media && typeof media.checkContextBudget === 'function') {
+        const budgetCheck = media.checkContextBudget(uploadedFiles, candidateEntry);
+        if (!budgetCheck.ok) {
+          errors.push(`${file.name} : ${budgetCheck.reason}`);
+          continue;
+        }
+      }
+
+      uploadedFiles.push(candidateEntry);
+      addedCount++;
+      lastSuccessMsg = successMsg;
     } catch (error) {
       console.error(`Erreur lecture ${file.name}:`, error);
-      showStatus(`Impossible de lire : ${file.name}`, 'error');
+      errors.push(`${file.name} : ${error && error.message ? error.message : 'impossible de lire ce fichier'}`);
     }
   }
+
   renderFileList();
+
+  if (addedCount > 0 && errors.length > 0) {
+    showStatus(`${addedCount} ajouté(s), ${errors.length} refusé(s) — ${errors[0]}`, 'error');
+  } else if (errors.length > 0) {
+    showStatus(errors[0], 'error');
+  } else if (addedCount === 1) {
+    showStatus(lastSuccessMsg, 'success');
+  } else if (addedCount > 1) {
+    showStatus(`${addedCount} fichiers ajoutés.`, 'success');
+  }
 }
 
 function readTextFileUTF8(file) {
@@ -1527,7 +1782,10 @@ function readTextFileUTF8(file) {
 }
 
 async function readFileWithStats(file) {
-  const extension = (file.name.split('.').pop() || '').toLowerCase();
+  const media = _getCourseMedia();
+  const extension = media && typeof media.getFileExtension === 'function'
+    ? media.getFileExtension(file.name)
+    : (file.name.split('.').pop() || '').toLowerCase();
   const cleaner = globalThis.NLPCleaner;
   let rawText = '';
 
@@ -1535,7 +1793,7 @@ async function readFileWithStats(file) {
     rawText = await extractTextFromPDF(file);
   } else if (extension === 'docx') {
     rawText = await extractTextFromDOCX(file);
-  } else {
+  } else if (['txt', 'md', 'markdown', 'html', 'htm', 'csv'].includes(extension)) {
     rawText = await readTextFileUTF8(file);
     if (extension === 'html' || extension === 'htm') {
       rawText = cleaner && typeof cleaner.extractTextFromHTML === 'function'
@@ -1546,6 +1804,8 @@ async function readFileWithStats(file) {
         ? cleaner.parseCSV(rawText)
         : rawText;
     }
+  } else {
+    throw new Error(`Format non pris en charge : ${file.name}`);
   }
 
   if (cleaner && typeof cleaner.cleanText === 'function') {
@@ -1664,34 +1924,69 @@ async function extractTextFromDOCX(file) {
 
 function renderFileList() {
   elements.fileList.textContent = '';
+  const media = _getCourseMedia();
+
   uploadedFiles.forEach((file, index) => {
     const item = document.createElement('div');
     item.className = 'file-item';
 
+    const mainWrap = document.createElement('div');
+    mainWrap.className = 'file-item-main';
+
+    const isImg = media && typeof media.isImageContextFile === 'function'
+      ? media.isImageContextFile(file)
+      : false;
+
+    if (isImg) {
+      const thumb = document.createElement('img');
+      thumb.className = 'file-thumb';
+      thumb.src = file.dataUrl;
+      thumb.alt = file.name || 'Image de cours';
+      mainWrap.appendChild(thumb);
+    }
+
+    const metaGroup = document.createElement('div');
+    metaGroup.className = 'file-meta-group';
+
     const labelWrap = document.createElement('span');
     labelWrap.className = 'file-name';
-    labelWrap.textContent = file.name;
+    labelWrap.textContent = file.name || (isImg ? 'Image de cours' : 'Document');
+    metaGroup.appendChild(labelWrap);
 
-    if (file.nlpStats && file.nlpStats.reductionRatio > 0) {
+    if (isImg) {
+      const dims = (file.width && file.height) ? `${file.width}×${file.height} · ` : '';
+      const sizeStr = media && typeof media.formatFileSize === 'function'
+        ? media.formatFileSize(file.size || (file.dataUrl ? file.dataUrl.length : 0))
+        : '';
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'file-meta';
+      metaSpan.textContent = `Image · ${dims}${sizeStr}`;
+      metaGroup.appendChild(metaSpan);
+    } else if (file.nlpStats && file.nlpStats.reductionRatio > 0) {
       const statsSpan = document.createElement('span');
       statsSpan.className = 'file-stats';
       statsSpan.textContent = `(-${Math.round(file.nlpStats.reductionRatio * 100)}% bruit)`;
       labelWrap.appendChild(statsSpan);
     }
 
+    mainWrap.appendChild(metaGroup);
+
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-file';
     removeBtn.textContent = '✕';
+    removeBtn.setAttribute('aria-label', `Supprimer ${file.name || 'le fichier'}`);
     removeBtn.addEventListener('click', () => {
       uploadedFiles.splice(index, 1);
       renderFileList();
     });
 
-    item.appendChild(labelWrap);
+    item.appendChild(mainWrap);
     item.appendChild(removeBtn);
     elements.fileList.appendChild(item);
   });
+
+  updateFileBudgetUI();
 }
 
 // Sauvegarder les paramètres
@@ -1791,7 +2086,12 @@ async function saveSettings() {
     showStatus('Enregistré.', 'success');
   } catch (error) {
     console.error('Erreur sauvegarde:', error);
-    showStatus('Échec de l\'enregistrement.', 'error');
+    const errMsg = (error && typeof error.message === 'string') ? error.message : '';
+    if (/quota|QUOTA_BYTES/i.test(errMsg)) {
+      showStatus('Quota de stockage Chrome dépassé : supprimez des images ou fichiers.', 'error');
+    } else {
+      showStatus('Échec de l\'enregistrement.', 'error');
+    }
   }
 }
 
@@ -1804,9 +2104,16 @@ async function resetSettings() {
 }
 
 function showStatus(message, type) {
+  if (_statusTimer !== null) {
+    clearTimeout(_statusTimer);
+    _statusTimer = null;
+  }
   elements.saveStatus.textContent = message;
   elements.saveStatus.className = `save-status ${type}`;
-  setTimeout(() => elements.saveStatus.textContent = '', 4000);
+  _statusTimer = setTimeout(() => {
+    elements.saveStatus.textContent = '';
+    _statusTimer = null;
+  }, 4000);
 }
 
 // Gestion du Cache des Schémas

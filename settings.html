@@ -103,17 +103,18 @@
           <div class="setting-item">
             <label>Fichiers joints</label>
             <div class="file-upload-area" id="fileUploadArea">
-              <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.csv">
+              <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.csv,.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif">
               <div class="file-upload-content">
                 <svg class="upload-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
                   <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
                   <path d="M4 17v3h16v-3"/>
                 </svg>
                 <p class="upload-title">Glissez vos fichiers ou cliquez pour parcourir</p>
-                <p class="help-text">PDF, Word (.docx), TXT, Markdown, HTML, CSV</p>
+                <p class="help-text">PDF, Word (.docx), TXT, Markdown, HTML, CSV, Images (PNG, JPG, WebP, GIF)</p>
               </div>
             </div>
             <div id="fileList" class="file-list"></div>
+            <p id="fileBudgetInfo" class="help-text file-budget-info" hidden></p>
           </div>
         </section>
       </div>
@@ -387,6 +388,7 @@
   <script src="providers.js"></script>
   <script src="schema-cache.js"></script>
   <script src="nlp-cleaner.js"></script>
+  <script src="course-media.js"></script>
   <script src="lib/pdf.min.js"></script>
   <script src="lib/mammoth.browser.min.js"></script>
   <script src="settings.js"></script>

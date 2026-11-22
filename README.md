@@ -45,7 +45,7 @@ Dès que l'extension est chargée, la page des **Paramètres** s'ouvrira.
     *   Allez sur [Google AI Studio](https://aistudio.google.com/app/apikey) (Gratuit, Très intelligent) pour une clé Gemini.
     *   Collez ces clés dans la page des paramètres de l'extension.
 2.  **Apprentissage (Le "Savoir")** :
-    *   Dans l'onglet "Contexte", vous pouvez copier-coller les textes de vos cours ou importer des PDF/DOCX. L'IA utilisera cette base de connaissances prioritairement pour répondre aux questions.
+    *   Dans l'onglet "Général" → **Notes de cours**, vous pouvez coller vos notes ou importer des documents (`PDF`, `Word .docx`, `TXT`, `Markdown`, `HTML`, `CSV`) ainsi que des **images** (`PNG`, `JPG`, `WebP`, `GIF` — schémas, formules, captures de cours) qui seront envoyées aux modèles compatibles Vision. L'IA utilisera cette base de connaissances prioritairement pour répondre aux questions.
 3.  **Comportement** :
     *   Activez le **Mode Auto** si vous souhaitez une prise en charge "mains libres".
 

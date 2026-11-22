@@ -3,11 +3,16 @@
 
 // Charger les modules partagés dans le contexte du service worker
 if (typeof importScripts === 'function') {
-  importScripts('provider-catalog.js', 'providers.js', 'background-agent.js');
+  importScripts('provider-catalog.js', 'course-media.js', 'providers.js', 'background-agent.js');
 } else if (typeof require === 'function' && typeof module !== 'undefined' && module.exports) {
   if (typeof globalThis.ProviderCatalog === 'undefined') {
     try {
       require('./provider-catalog.js');
+    } catch (_) { /* ignore if unavailable in isolated test */ }
+  }
+  if (typeof globalThis.CourseMedia === 'undefined') {
+    try {
+      require('./course-media.js');
     } catch (_) { /* ignore if unavailable in isolated test */ }
   }
   if (typeof globalThis.QuizProviders === 'undefined' || typeof globalThis.ConfigCache === 'undefined') {
