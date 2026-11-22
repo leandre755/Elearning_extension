@@ -507,8 +507,8 @@ function renderProviderCards() {
       baseInput.id = `${id}BaseUrl`;
       baseInput.className = 'provider-baseurl-input';
       baseInput.dataset.provider = id;
-      baseInput.placeholder = provider.baseUrl ||
-        (id === 'azure_openai' ? 'https://<ressource>.openai.azure.com/openai/v1' : 'https://...');
+      baseInput.placeholder = provider.baseUrlPlaceholder || provider.baseUrl ||
+        (id === 'azure_openai' ? 'https://<ressource>.openai.azure.com/openai/v1' : 'https://.../v1');
       baseInput.addEventListener('input', () => {
         updateApiKeyBadges();
         renderPriorityList();
@@ -551,7 +551,9 @@ function renderProviderCards() {
     const modelsInfo = document.createElement('span');
     modelsInfo.className = 'help-text provider-models-count';
     modelsInfo.id = `${id}ModelsInfo`;
-    modelsInfo.textContent = `Modèle par défaut : ${provider.defaultTextModel || 'auto'}`;
+    modelsInfo.textContent = provider.genericProtocolConnector === true
+      ? 'Protocole générique · cliquez sur « Modèles » pour charger /v1/models'
+      : `Modèle par défaut : ${provider.defaultTextModel || 'auto'}`;
     metaDiv.appendChild(modelsInfo);
 
     if (typeof provider.credentialUrl === 'string' && provider.credentialUrl.startsWith('https://')) {
@@ -732,7 +734,11 @@ async function loadSettings() {
           syncedModelsByProvider[id] = cached;
           const infoEl = document.getElementById(`${id}ModelsInfo`);
           if (infoEl) {
-            infoEl.textContent = `${cached.length} modèle(s) en cache (défaut : ${providersMap[id].defaultTextModel || 'auto'})`;
+            const pDef = providersMap[id];
+            const defLbl = (pDef && pDef.genericProtocolConnector === true)
+              ? (cached[0]?.id || 'auto')
+              : (pDef?.defaultTextModel || 'auto');
+            infoEl.textContent = `${cached.length} modèle(s) en cache (défaut : ${defLbl})`;
           }
         }
       })
@@ -912,9 +918,15 @@ function getModelSuggestionsForProvider(id, provider) {
       list.push(val.trim());
     }
   };
-  (provider.textModels || []).forEach(m => pushId(m?.id));
-  (provider.visionModels || []).forEach(m => pushId(m?.id));
-  (syncedModelsByProvider[id] || []).forEach(m => pushId(m?.id));
+  if (provider && provider.genericProtocolConnector === true) {
+    (syncedModelsByProvider[id] || []).forEach(m => pushId(m?.id));
+    (provider.textModels || []).forEach(m => pushId(m?.id));
+    (provider.visionModels || []).forEach(m => pushId(m?.id));
+  } else {
+    (provider.textModels || []).forEach(m => pushId(m?.id));
+    (provider.visionModels || []).forEach(m => pushId(m?.id));
+    (syncedModelsByProvider[id] || []).forEach(m => pushId(m?.id));
+  }
   return list;
 }
 
@@ -990,8 +1002,16 @@ function renderModelOverrides() {
       return group;
     };
 
-    row.appendChild(makeField('Modèle texte', 'text', p.defaultTextModel, customModels[id]?.text));
-    row.appendChild(makeField('Modèle vision', 'vision', p.defaultVisionModel, customModels[id]?.vision));
+    const syncedList = Array.isArray(syncedModelsByProvider[id]) ? syncedModelsByProvider[id] : [];
+    const defaultTextDisplay = p.genericProtocolConnector === true
+      ? (syncedList[0]?.id || p.defaultTextModel || 'auto')
+      : (p.defaultTextModel || syncedList[0]?.id || 'auto');
+    const defaultVisionDisplay = p.genericProtocolConnector === true
+      ? ((syncedList.find(m => m && m.vision === true) || syncedList[0])?.id || p.defaultVisionModel || 'auto')
+      : (p.defaultVisionModel || (syncedList.find(m => m && m.vision === true) || syncedList[0])?.id || 'auto');
+
+    row.appendChild(makeField('Modèle texte', 'text', defaultTextDisplay, customModels[id]?.text));
+    row.appendChild(makeField('Modèle vision', 'vision', defaultVisionDisplay, customModels[id]?.vision));
 
     div.appendChild(row);
     elements.modelOverrides.appendChild(div);
@@ -1314,7 +1334,10 @@ async function syncProviderModelsUI(id, btn) {
       syncedModelsByProvider[providerKey] = models;
       const infoEl = document.getElementById(`${providerKey}ModelsInfo`);
       if (infoEl) {
-        infoEl.textContent = `${models.length} modèle${models.length > 1 ? 's' : ''} synchronisé${models.length > 1 ? 's' : ''} · défaut : ${provider.defaultTextModel || models[0]?.id || 'auto'}`;
+        const defaultLabel = provider.genericProtocolConnector === true
+          ? (models[0]?.id || 'auto')
+          : (provider.defaultTextModel || models[0]?.id || 'auto');
+        infoEl.textContent = `${models.length} modèle${models.length > 1 ? 's' : ''} synchronisé${models.length > 1 ? 's' : ''} · défaut : ${defaultLabel}`;
       }
       renderModelOverrides();
       showStatus(`${provider.name || id} : ${models.length} modèle${models.length > 1 ? 's' : ''} chargé${models.length > 1 ? 's' : ''}.`, 'success');
@@ -1399,7 +1422,13 @@ async function testProvider(id, btn) {
     const overrideModel = liveModelInput
       ? liveModelInput.value.trim()
       : (typeof customModels[providerKey]?.text === 'string' ? customModels[providerKey].text.trim() : '');
-    const model = overrideModel || provider.defaultTextModel || '';
+    const firstSyncedModel = (Array.isArray(syncedModelsByProvider[providerKey]) && syncedModelsByProvider[providerKey][0]?.id)
+      ? syncedModelsByProvider[providerKey][0].id
+      : '';
+    const defaultModelCandidate = provider.genericProtocolConnector === true
+      ? (firstSyncedModel || provider.defaultTextModel || '')
+      : (provider.defaultTextModel || firstSyncedModel || '');
+    const model = overrideModel || defaultModelCandidate;
     if (!model) {
       showStatus(`Renseignez d'abord un modèle texte pour ${provider.name || id} (onglet Modèles).`, 'error');
       btn.style.borderColor = 'var(--error-color)';
@@ -1432,7 +1461,10 @@ async function testProvider(id, btn) {
               syncedModelsByProvider[providerKey] = models;
               const infoEl = document.getElementById(`${providerKey}ModelsInfo`);
               if (infoEl) {
-                infoEl.textContent = `${models.length} modèle${models.length > 1 ? 's' : ''} synchronisé${models.length > 1 ? 's' : ''} · défaut : ${provider.defaultTextModel || models[0]?.id || 'auto'}`;
+                const defaultLabel = provider.genericProtocolConnector === true
+                  ? (models[0]?.id || 'auto')
+                  : (provider.defaultTextModel || models[0]?.id || 'auto');
+                infoEl.textContent = `${models.length} modèle${models.length > 1 ? 's' : ''} synchronisé${models.length > 1 ? 's' : ''} · défaut : ${defaultLabel}`;
               }
               renderModelOverrides();
             }

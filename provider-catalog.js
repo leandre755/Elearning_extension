@@ -34,14 +34,17 @@ const ProviderCatalog = (() => {
       defaultVisionModel: 'openrouter/auto',
       textModels: [
         modelEntry('openrouter/auto', 'OpenRouter Auto', 128000),
-        modelEntry('anthropic/claude-sonnet-4.5', 'Claude Sonnet 4.5 (OpenRouter)', 200000),
-        modelEntry('openai/gpt-4.1-mini', 'GPT-4.1 Mini (OpenRouter)', 1047576),
-        modelEntry('google/gemini-2.5-flash', 'Gemini 2.5 Flash (OpenRouter)', 1048576)
+        modelEntry('moonshotai/kimi-k2.6:free', 'Kimi K2.6 (Free)', 262144, true),
+        modelEntry('nvidia/nemotron-3-super-120b-a12b:free', 'Nemotron 3 Super 120B (Free)', 1048576, true),
+        modelEntry('openai/gpt-oss-120b:free', 'GPT-OSS 120B (Free)', 131072, true),
+        modelEntry('poolside/laguna-m.1:free', 'Laguna M.1 (Free)', 131072, true),
+        modelEntry('anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5 (OpenRouter)', 1000000),
+        modelEntry('google/gemini-4-hydrogen', 'Gemini 4 Hydrogen (OpenRouter)', 1048576)
       ],
       visionModels: [
         modelEntry('openrouter/auto', 'OpenRouter Auto (Vision)', 128000),
-        modelEntry('anthropic/claude-sonnet-4.5', 'Claude Sonnet 4.5 Vision', 200000),
-        modelEntry('openai/gpt-4.1-mini', 'GPT-4.1 Mini Vision', 1047576)
+        modelEntry('anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5 Vision', 1000000),
+        modelEntry('google/gemini-4-hydrogen', 'Gemini 4 Hydrogen Vision', 1048576)
       ]
     },
 
@@ -55,16 +58,17 @@ const ProviderCatalog = (() => {
       apiKeyField: 'opencodeZenApiKey',
       keyPlaceholder: 'sk-...',
       credentialUrl: 'https://opencode.ai/auth',
-      defaultTextModel: 'big-pickle',
-      defaultVisionModel: 'big-pickle',
+      defaultTextModel: 'gpt-5.3-codex',
+      defaultVisionModel: 'gpt-5.3-codex',
       textModels: [
-        modelEntry('big-pickle', 'Big Pickle', 128000),
-        modelEntry('gpt-5-nano', 'GPT-5 Nano', 128000),
-        modelEntry('glm-4.7-free', 'GLM 4.7 Free', 128000, true)
+        modelEntry('gpt-5.3-codex', 'GPT-5.3 Codex', 256000),
+        modelEntry('muse-spark-1.3-free', 'Muse Spark 1.3 (Free)', 131072, true),
+        modelEntry('mimo-v2.5-free', 'MiMo v2.5 (Free)', 131072, true),
+        modelEntry('laguna-s-2.1-free', 'Laguna S 2.1 (Free)', 131072, true)
       ],
       visionModels: [
-        modelEntry('big-pickle', 'Big Pickle (Vision)', 128000),
-        modelEntry('gpt-5-nano', 'GPT-5 Nano (Vision)', 128000)
+        modelEntry('gpt-5.3-codex', 'GPT-5.3 Codex (Vision)', 256000),
+        modelEntry('muse-spark-1.3-free', 'Muse Spark 1.3 Vision (Free)', 131072, true)
       ]
     },
 
@@ -78,16 +82,17 @@ const ProviderCatalog = (() => {
       apiKeyField: 'opencodeGoApiKey',
       keyPlaceholder: 'sk-...',
       credentialUrl: 'https://opencode.ai/auth',
-      defaultTextModel: 'glm-5',
-      defaultVisionModel: 'glm-5',
+      defaultTextModel: 'minimax-m2.7',
+      defaultVisionModel: 'minimax-m2.7',
       textModels: [
-        modelEntry('glm-5', 'GLM-5', 128000),
-        modelEntry('kimi-k2.5', 'Kimi K2.5', 262144),
-        modelEntry('minimax-m2.5', 'MiniMax M2.5', 196608)
+        modelEntry('minimax-m2.7', 'MiniMax M2.7', 196608),
+        modelEntry('glm-5.2', 'GLM-5.2', 200000),
+        modelEntry('kimi-k3', 'Kimi K3', 262144)
       ],
       visionModels: [
-        modelEntry('glm-5', 'GLM-5 (Vision)', 128000),
-        modelEntry('kimi-k2.5', 'Kimi K2.5 (Vision)', 262144)
+        modelEntry('minimax-m2.7', 'MiniMax M2.7 (Vision)', 196608),
+        modelEntry('glm-5.2', 'GLM-5.2 (Vision)', 200000),
+        modelEntry('kimi-k3', 'Kimi K3 (Vision)', 262144)
       ]
     },
 
@@ -101,12 +106,14 @@ const ProviderCatalog = (() => {
       apiKeyField: 'waferApiKey',
       keyPlaceholder: 'wf_...',
       credentialUrl: 'https://www.wafer.ai/pass',
-      defaultTextModel: 'auto',
-      defaultVisionModel: 'auto',
+      defaultTextModel: 'DeepSeek-V4-Pro',
+      defaultVisionModel: 'DeepSeek-V4-Pro',
       textModels: [
+        modelEntry('DeepSeek-V4-Pro', 'DeepSeek V4 Pro', 131072),
         modelEntry('auto', 'Wafer Auto', 128000)
       ],
       visionModels: [
+        modelEntry('DeepSeek-V4-Pro', 'DeepSeek V4 Pro (Vision)', 131072),
         modelEntry('auto', 'Wafer Auto (Vision)', 128000)
       ]
     },
@@ -122,14 +129,15 @@ const ProviderCatalog = (() => {
       keyPlaceholder: 'csk-...',
       credentialUrl: 'https://cloud.cerebras.ai',
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'qwen-3-235b-a22b-instruct-2507',
-      defaultVisionModel: 'qwen-3-235b-a22b-instruct-2507',
+      defaultTextModel: 'gpt-oss-120b',
+      defaultVisionModel: 'qwen-3.8-27b',
       textModels: [
-        modelEntry('qwen-3-235b-a22b-instruct-2507', 'Qwen 3 235B Instruct', 131072),
-        modelEntry('llama-3.3-70b', 'Llama 3.3 70B', 128000),
-        modelEntry('gpt-oss-120b', 'GPT-OSS 120B', 131072)
+        modelEntry('gpt-oss-120b', 'GPT-OSS 120B', 131072),
+        modelEntry('qwen-3.8-27b', 'Qwen 3.8 27B', 131072),
+        modelEntry('qwen-3-235b-a22b-instruct-2507', 'Qwen 3 235B Instruct', 131072)
       ],
       visionModels: [
+        modelEntry('qwen-3.8-27b', 'Qwen 3.8 27B (Vision)', 131072),
         modelEntry('qwen-3-235b-a22b-instruct-2507', 'Qwen 3 235B', 131072)
       ]
     },
@@ -146,13 +154,16 @@ const ProviderCatalog = (() => {
       credentialUrl: 'https://www.tokenrouter.com/',
       supportsCustomBaseUrl: true,
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'auto',
-      defaultVisionModel: 'auto',
+      defaultTextModel: 'moonshotai/kimi-k3-free',
+      defaultVisionModel: 'glm-5.3-free',
       textModels: [
+        modelEntry('moonshotai/kimi-k3-free', 'Kimi K3 (Free)', 262144, true),
+        modelEntry('glm-5.3-free', 'GLM 5.3 (Free)', 128000, true),
         modelEntry('auto', 'TokenRouter Auto', 128000)
       ],
       visionModels: [
-        modelEntry('auto', 'TokenRouter Auto (Vision)', 128000)
+        modelEntry('glm-5.3-free', 'GLM 5.3 Vision (Free)', 128000, true),
+        modelEntry('moonshotai/kimi-k3-free', 'Kimi K3 Vision (Free)', 262144, true)
       ]
     },
 
@@ -167,12 +178,14 @@ const ProviderCatalog = (() => {
       keyPlaceholder: 'cc_...',
       supportsCustomBaseUrl: true,
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'auto',
-      defaultVisionModel: 'auto',
+      defaultTextModel: 'laguna-s-2.1-free',
+      defaultVisionModel: 'laguna-s-2.1-free',
       textModels: [
+        modelEntry('laguna-s-2.1-free', 'Laguna S 2.1 (Free)', 131072, true),
         modelEntry('auto', 'CommandCode Auto', 128000)
       ],
       visionModels: [
+        modelEntry('laguna-s-2.1-free', 'Laguna S 2.1 Vision (Free)', 131072, true),
         modelEntry('auto', 'CommandCode Auto (Vision)', 128000)
       ]
     },
@@ -183,21 +196,22 @@ const ProviderCatalog = (() => {
       category: 'cloud',
       local: false,
       tierLabel: 'Générique',
-      baseUrl: 'https://api.openai.com/v1',
+      baseUrl: '',
       apiKeyField: 'openaiCompatibleApiKey',
-      keyPlaceholder: 'sk-...',
+      keyPlaceholder: 'Clé ou jeton API du serveur...',
+      baseUrlPlaceholder: 'https://votre-serveur.example.com/v1 ou http://127.0.0.1:8080/v1',
       supportsCustomBaseUrl: true,
+      requiresBaseUrl: true,
       allowsLoopbackBaseUrl: true,
-      defaultTextModel: 'gpt-4o-mini',
-      defaultVisionModel: 'gpt-4o-mini',
+      normalizeV1: true,
+      genericProtocolConnector: true,
+      defaultTextModel: 'auto',
+      defaultVisionModel: 'auto',
       textModels: [
-        modelEntry('gpt-4o-mini', 'GPT-4o Mini', 128000),
-        modelEntry('gpt-4o', 'GPT-4o', 128000),
-        modelEntry('gpt-4.1-mini', 'GPT-4.1 Mini', 1047576)
+        modelEntry('auto', 'Modèle du serveur (/v1/models)', 131072)
       ],
       visionModels: [
-        modelEntry('gpt-4o-mini', 'GPT-4o Mini (Vision)', 128000),
-        modelEntry('gpt-4o', 'GPT-4o (Vision)', 128000)
+        modelEntry('auto', 'Modèle vision du serveur (/v1/models)', 131072)
       ]
     },
 
@@ -216,15 +230,15 @@ const ProviderCatalog = (() => {
         collectionField: 'models',
         aliasesField: 'aliases'
       },
-      defaultTextModel: 'grok-4',
-      defaultVisionModel: 'grok-4',
+      defaultTextModel: 'grok-4.5',
+      defaultVisionModel: 'grok-4.5',
       textModels: [
-        modelEntry('grok-4', 'Grok 4', 256000),
-        modelEntry('grok-3-mini', 'Grok 3 Mini', 131072)
+        modelEntry('grok-4.5', 'Grok 4.5', 256000),
+        modelEntry('grok-4', 'Grok 4', 256000)
       ],
       visionModels: [
-        modelEntry('grok-4', 'Grok 4 (Vision)', 256000),
-        modelEntry('grok-2-vision-1212', 'Grok 2 Vision', 32768)
+        modelEntry('grok-4.5', 'Grok 4.5 (Vision)', 256000),
+        modelEntry('grok-4', 'Grok 4 (Vision)', 256000)
       ]
     },
 
@@ -238,13 +252,15 @@ const ProviderCatalog = (() => {
       apiKeyField: 'qwencloudApiKey',
       keyPlaceholder: 'sk-...',
       credentialUrl: 'https://home.qwencloud.com/api-keys',
-      defaultTextModel: 'qwen3-max',
-      defaultVisionModel: 'qwen3-vl-plus',
+      defaultTextModel: 'qwen3.7-plus',
+      defaultVisionModel: 'qwen3.8-vl',
       textModels: [
+        modelEntry('qwen3.7-plus', 'Qwen 3.7 Plus', 131072),
         modelEntry('qwen3-max', 'Qwen 3 Max', 131072),
         modelEntry('qwen3-coder-plus', 'Qwen 3 Coder Plus', 131072)
       ],
       visionModels: [
+        modelEntry('qwen3.8-vl', 'Qwen 3.8 VL', 131072),
         modelEntry('qwen3-vl-plus', 'Qwen 3 VL Plus', 131072)
       ]
     },
@@ -264,14 +280,16 @@ const ProviderCatalog = (() => {
         collectionField: null,
         fieldEquals: ['type', 'chat']
       },
-      defaultTextModel: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-      defaultVisionModel: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+      defaultTextModel: 'zai-org/GLM-5.2',
+      defaultVisionModel: 'Qwen/Qwen3.8-27B',
       textModels: [
-        modelEntry('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8', 'Llama 4 Maverick', 524288),
-        modelEntry('deepseek-ai/DeepSeek-V3', 'DeepSeek V3', 131072)
+        modelEntry('zai-org/GLM-5.2', 'GLM-5.2', 200000),
+        modelEntry('deepseek-ai/DeepSeek-V4-Pro', 'DeepSeek V4 Pro', 131072),
+        modelEntry('Qwen/Qwen3.8-27B', 'Qwen 3.8 27B', 131072)
       ],
       visionModels: [
-        modelEntry('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8', 'Llama 4 Maverick (Vision)', 524288)
+        modelEntry('Qwen/Qwen3.8-27B', 'Qwen 3.8 27B (Vision)', 131072),
+        modelEntry('zai-org/GLM-5.2', 'GLM-5.2 (Vision)', 200000)
       ]
     },
 
@@ -288,15 +306,16 @@ const ProviderCatalog = (() => {
       supportsCustomBaseUrl: true,
       requiresBaseUrl: true,
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'gpt-4o',
-      defaultVisionModel: 'gpt-4o',
+      defaultTextModel: 'gpt-5.5',
+      defaultVisionModel: 'gpt-5.5',
       textModels: [
-        modelEntry('gpt-4o', 'Azure GPT-4o', 128000),
-        modelEntry('gpt-4o-mini', 'Azure GPT-4o Mini', 128000)
+        modelEntry('gpt-5.5', 'Azure GPT-5.5', 256000),
+        modelEntry('gpt-5.1', 'Azure GPT-5.1', 256000),
+        modelEntry('gpt-5.3-codex', 'Azure GPT-5.3 Codex', 256000)
       ],
       visionModels: [
-        modelEntry('gpt-4o', 'Azure GPT-4o (Vision)', 128000),
-        modelEntry('gpt-4o-mini', 'Azure GPT-4o Mini (Vision)', 128000)
+        modelEntry('gpt-5.5', 'Azure GPT-5.5 (Vision)', 256000),
+        modelEntry('gpt-5.1', 'Azure GPT-5.1 (Vision)', 256000)
       ]
     },
 
@@ -310,14 +329,17 @@ const ProviderCatalog = (() => {
       apiKeyField: 'deepseekApiKey',
       keyPlaceholder: 'sk-...',
       credentialUrl: 'https://platform.deepseek.com/api_keys',
-      defaultTextModel: 'deepseek-chat',
-      defaultVisionModel: 'deepseek-chat',
+      defaultTextModel: 'deepseek-v4-pro',
+      defaultVisionModel: 'deepseek-v4-pro',
       textModels: [
-        modelEntry('deepseek-chat', 'DeepSeek Chat (V3)', 131072),
-        modelEntry('deepseek-reasoner', 'DeepSeek Reasoner (R1)', 131072)
+        modelEntry('deepseek-v4-pro', 'DeepSeek V4 Pro', 131072),
+        modelEntry('deepseek-v4-flash', 'DeepSeek V4 Flash', 131072),
+        modelEntry('deepseek-chat', 'DeepSeek Chat', 131072),
+        modelEntry('deepseek-reasoner', 'DeepSeek Reasoner', 131072)
       ],
       visionModels: [
-        modelEntry('deepseek-chat', 'DeepSeek Chat', 131072)
+        modelEntry('deepseek-v4-pro', 'DeepSeek V4 Pro (Vision)', 131072),
+        modelEntry('deepseek-v4-flash', 'DeepSeek V4 Flash (Vision)', 131072)
       ]
     },
 
@@ -331,14 +353,17 @@ const ProviderCatalog = (() => {
       apiKeyField: 'vercelApiKey',
       keyPlaceholder: 'vck_...',
       credentialUrl: 'https://vercel.com/docs/ai-gateway',
-      defaultTextModel: 'openai/gpt-4o-mini',
-      defaultVisionModel: 'openai/gpt-4o-mini',
+      defaultTextModel: 'openai/gpt-5.5',
+      defaultVisionModel: 'openai/gpt-5.5',
       textModels: [
-        modelEntry('openai/gpt-4o-mini', 'GPT-4o Mini (Vercel)', 128000),
-        modelEntry('anthropic/claude-sonnet-4', 'Claude Sonnet 4 (Vercel)', 200000)
+        modelEntry('openai/gpt-5.5', 'GPT-5.5 (Vercel)', 256000),
+        modelEntry('anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5 (Vercel)', 1000000),
+        modelEntry('google/gemini-4-hydrogen', 'Gemini 4 Hydrogen (Vercel)', 1048576)
       ],
       visionModels: [
-        modelEntry('openai/gpt-4o-mini', 'GPT-4o Mini (Vercel Vision)', 128000)
+        modelEntry('openai/gpt-5.5', 'GPT-5.5 (Vercel Vision)', 256000),
+        modelEntry('anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5 (Vercel Vision)', 1000000),
+        modelEntry('google/gemini-4-hydrogen', 'Gemini 4 Hydrogen (Vercel Vision)', 1048576)
       ]
     },
 
@@ -354,15 +379,16 @@ const ProviderCatalog = (() => {
       credentialUrl: 'https://console.aws.amazon.com/bedrock/',
       supportsCustomBaseUrl: true,
       normalizeV1: true,
-      defaultTextModel: 'anthropic.claude-sonnet-4-5-20250929-v1:0',
-      defaultVisionModel: 'anthropic.claude-sonnet-4-5-20250929-v1:0',
+      defaultTextModel: 'openai.gpt-oss-120b',
+      defaultVisionModel: 'anthropic.claude-sonnet-5-5-v1:0',
       textModels: [
-        modelEntry('anthropic.claude-sonnet-4-5-20250929-v1:0', 'Claude Sonnet 4.5 (Bedrock)', 200000),
-        modelEntry('amazon.nova-pro-v1:0', 'Amazon Nova Pro', 300000)
+        modelEntry('openai.gpt-oss-120b', 'GPT-OSS 120B (Bedrock)', 131072),
+        modelEntry('anthropic.claude-sonnet-5-5-v1:0', 'Claude Sonnet 5.5 (Bedrock)', 1000000),
+        modelEntry('anthropic.claude-opus-5-5-v1:0', 'Claude Opus 5.5 (Bedrock)', 1000000)
       ],
       visionModels: [
-        modelEntry('anthropic.claude-sonnet-4-5-20250929-v1:0', 'Claude Sonnet 4.5 Vision', 200000),
-        modelEntry('amazon.nova-pro-v1:0', 'Amazon Nova Pro Vision', 300000)
+        modelEntry('anthropic.claude-sonnet-5-5-v1:0', 'Claude Sonnet 5.5 Vision', 1000000),
+        modelEntry('anthropic.claude-opus-5-5-v1:0', 'Claude Opus 5.5 Vision', 1000000)
       ]
     },
 
@@ -376,14 +402,16 @@ const ProviderCatalog = (() => {
       apiKeyField: 'huggingfaceApiKey',
       keyPlaceholder: 'hf_...',
       credentialUrl: 'https://huggingface.co/settings/tokens',
-      defaultTextModel: 'Qwen/Qwen3-235B-A22B',
-      defaultVisionModel: 'Qwen/Qwen2.5-VL-72B-Instruct',
+      defaultTextModel: 'openai/gpt-oss-120b:fastest',
+      defaultVisionModel: 'Qwen/Qwen3.8-27B',
       textModels: [
-        modelEntry('Qwen/Qwen3-235B-A22B', 'Qwen 3 235B', 131072),
-        modelEntry('meta-llama/Llama-3.3-70B-Instruct', 'Llama 3.3 70B', 131072)
+        modelEntry('openai/gpt-oss-120b:fastest', 'GPT-OSS 120B Fastest', 131072),
+        modelEntry('Qwen/Qwen3.8-27B', 'Qwen 3.8 27B', 131072),
+        modelEntry('google/gemma-4-31b-it', 'Gemma 4 31B', 262144)
       ],
       visionModels: [
-        modelEntry('Qwen/Qwen2.5-VL-72B-Instruct', 'Qwen 2.5 VL 72B', 131072)
+        modelEntry('Qwen/Qwen3.8-27B', 'Qwen 3.8 27B (Vision)', 131072),
+        modelEntry('google/gemma-4-31b-it', 'Gemma 4 31B (Vision)', 262144)
       ]
     },
 
@@ -397,11 +425,11 @@ const ProviderCatalog = (() => {
       apiKeyField: 'cohereApiKey',
       keyPlaceholder: 'Clé Cohere...',
       credentialUrl: 'https://dashboard.cohere.com/api-keys',
-      defaultTextModel: 'command-a-03-2025',
+      defaultTextModel: 'command-a-plus-05-2026',
       defaultVisionModel: 'command-a-vision-07-2025',
       textModels: [
-        modelEntry('command-a-03-2025', 'Command A', 256000),
-        modelEntry('command-r-plus-08-2024', 'Command R+', 128000)
+        modelEntry('command-a-plus-05-2026', 'Command A+ (2026)', 256000),
+        modelEntry('command-a-03-2025', 'Command A', 256000)
       ],
       visionModels: [
         modelEntry('command-a-vision-07-2025', 'Command A Vision', 128000)
@@ -427,15 +455,16 @@ const ProviderCatalog = (() => {
         collectionField: null,
         githubCatalog: true
       },
-      defaultTextModel: 'openai/gpt-4.1-mini',
-      defaultVisionModel: 'openai/gpt-4.1-mini',
+      defaultTextModel: 'openai/gpt-5.5',
+      defaultVisionModel: 'openai/gpt-5.5',
       textModels: [
-        modelEntry('openai/gpt-4.1-mini', 'GPT-4.1 Mini (GitHub)', 1047576),
-        modelEntry('openai/gpt-4o', 'GPT-4o (GitHub)', 128000)
+        modelEntry('openai/gpt-5.5', 'GPT-5.5 (GitHub)', 256000),
+        modelEntry('openai/gpt-5.1', 'GPT-5.1 (GitHub)', 256000),
+        modelEntry('openai/gpt-oss-120b', 'GPT-OSS 120B (GitHub)', 131072)
       ],
       visionModels: [
-        modelEntry('openai/gpt-4.1-mini', 'GPT-4.1 Mini Vision', 1047576),
-        modelEntry('openai/gpt-4o', 'GPT-4o Vision', 128000)
+        modelEntry('openai/gpt-5.5', 'GPT-5.5 Vision (GitHub)', 256000),
+        modelEntry('openai/gpt-5.1', 'GPT-5.1 Vision (GitHub)', 256000)
       ]
     },
 
@@ -449,14 +478,16 @@ const ProviderCatalog = (() => {
       apiKeyField: 'kimiApiKey',
       keyPlaceholder: 'sk-...',
       credentialUrl: 'https://platform.moonshot.cn/console/api-keys',
-      defaultTextModel: 'kimi-k2.5',
-      defaultVisionModel: 'kimi-k2.5',
+      defaultTextModel: 'kimi-k3.1-pro',
+      defaultVisionModel: 'kimi-k3.1-pro',
       textModels: [
-        modelEntry('kimi-k2.5', 'Kimi K2.5', 262144),
-        modelEntry('kimi-k2-0905-preview', 'Kimi K2 Preview', 262144)
+        modelEntry('kimi-k3.1-pro', 'Kimi K3.1 Pro', 1048576),
+        modelEntry('kimi-k3', 'Kimi K3', 262144),
+        modelEntry('kimi-k2.6', 'Kimi K2.6', 262144)
       ],
       visionModels: [
-        modelEntry('kimi-k2.5', 'Kimi K2.5 (Vision)', 262144)
+        modelEntry('kimi-k3.1-pro', 'Kimi K3.1 Pro (Vision)', 1048576),
+        modelEntry('kimi-k3', 'Kimi K3 (Vision)', 262144)
       ]
     },
 
@@ -471,13 +502,15 @@ const ProviderCatalog = (() => {
       keyPlaceholder: 'sk-kimi-...',
       credentialUrl: 'https://www.kimi.com/code/console',
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'kimi-for-coding',
-      defaultVisionModel: 'kimi-for-coding',
+      defaultTextModel: 'k3',
+      defaultVisionModel: 'k3',
       textModels: [
-        modelEntry('kimi-for-coding', 'Kimi For Coding', 262144)
+        modelEntry('k3', 'Kimi Code K3', 262144),
+        modelEntry('kimi-k3.1-pro', 'Kimi K3.1 Pro', 1048576)
       ],
       visionModels: [
-        modelEntry('kimi-for-coding', 'Kimi For Coding (Vision)', 262144)
+        modelEntry('k3', 'Kimi Code K3 (Vision)', 262144),
+        modelEntry('kimi-k3.1-pro', 'Kimi K3.1 Pro (Vision)', 1048576)
       ]
     },
 
@@ -491,13 +524,13 @@ const ProviderCatalog = (() => {
       apiKeyField: 'kiloApiKey',
       keyPlaceholder: 'sk-kilo-...',
       credentialUrl: 'https://app.kilo.ai',
-      defaultTextModel: 'kilo/auto',
-      defaultVisionModel: 'kilo/auto',
+      defaultTextModel: 'kilo-auto/free',
+      defaultVisionModel: 'kilo-auto/free',
       textModels: [
-        modelEntry('kilo/auto', 'Kilo Auto', 128000)
+        modelEntry('kilo-auto/free', 'Kilo Auto (Free)', 128000, true)
       ],
       visionModels: [
-        modelEntry('kilo/auto', 'Kilo Auto (Vision)', 128000)
+        modelEntry('kilo-auto/free', 'Kilo Auto Vision (Free)', 128000, true)
       ]
     },
 
@@ -512,14 +545,16 @@ const ProviderCatalog = (() => {
       keyPlaceholder: 'eyJ...',
       credentialUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key',
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'MiniMax-M2.5',
-      defaultVisionModel: 'MiniMax-M2.5',
+      defaultTextModel: 'MiniMax-M3',
+      defaultVisionModel: 'MiniMax-M3.1-Flash',
       textModels: [
-        modelEntry('MiniMax-M2.5', 'MiniMax M2.5', 196608),
-        modelEntry('MiniMax-M2.5-highspeed', 'MiniMax M2.5 Highspeed', 196608)
+        modelEntry('MiniMax-M3', 'MiniMax M3', 1048576),
+        modelEntry('MiniMax-M3.1-Flash', 'MiniMax M3.1 Flash', 1048576),
+        modelEntry('MiniMax-M2.7', 'MiniMax M2.7', 196608)
       ],
       visionModels: [
-        modelEntry('MiniMax-M2.5', 'MiniMax M2.5 (Vision)', 196608)
+        modelEntry('MiniMax-M3.1-Flash', 'MiniMax M3.1 Flash (Vision)', 1048576),
+        modelEntry('MiniMax-M3', 'MiniMax M3 (Vision)', 1048576)
       ]
     },
 
@@ -533,14 +568,15 @@ const ProviderCatalog = (() => {
       apiKeyField: 'sambanovaApiKey',
       keyPlaceholder: 'Clé SambaNova...',
       credentialUrl: 'https://cloud.sambanova.ai/apis',
-      defaultTextModel: 'Meta-Llama-3.3-70B-Instruct',
-      defaultVisionModel: 'Llama-4-Maverick-17B-128E-Instruct',
+      defaultTextModel: 'DeepSeek-V4-Pro',
+      defaultVisionModel: 'Qwen3.8-27B',
       textModels: [
-        modelEntry('Meta-Llama-3.3-70B-Instruct', 'Llama 3.3 70B', 131072),
-        modelEntry('DeepSeek-V3-0324', 'DeepSeek V3', 131072)
+        modelEntry('DeepSeek-V4-Pro', 'DeepSeek V4 Pro', 131072),
+        modelEntry('Qwen3.8-27B', 'Qwen 3.8 27B', 131072),
+        modelEntry('gpt-oss-120b', 'GPT-OSS 120B', 131072)
       ],
       visionModels: [
-        modelEntry('Llama-4-Maverick-17B-128E-Instruct', 'Llama 4 Maverick Vision', 131072)
+        modelEntry('Qwen3.8-27B', 'Qwen 3.8 27B (Vision)', 131072)
       ]
     },
 
@@ -554,14 +590,15 @@ const ProviderCatalog = (() => {
       apiKeyField: 'fireworksApiKey',
       keyPlaceholder: 'fw_...',
       credentialUrl: 'https://fireworks.ai/account/api-keys',
-      defaultTextModel: 'accounts/fireworks/models/deepseek-v3p1',
-      defaultVisionModel: 'accounts/fireworks/models/qwen2p5-vl-32b-instruct',
+      defaultTextModel: 'accounts/fireworks/models/deepseek-v4-pro',
+      defaultVisionModel: 'accounts/fireworks/models/qwen3p8-27b',
       textModels: [
-        modelEntry('accounts/fireworks/models/deepseek-v3p1', 'DeepSeek V3.1', 163840),
-        modelEntry('accounts/fireworks/models/qwen3-235b-a22b', 'Qwen 3 235B', 131072)
+        modelEntry('accounts/fireworks/models/deepseek-v4-pro', 'DeepSeek V4 Pro', 163840),
+        modelEntry('accounts/fireworks/models/qwen3p8-27b', 'Qwen 3.8 27B', 131072),
+        modelEntry('accounts/fireworks/models/gpt-oss-120b', 'GPT-OSS 120B', 131072)
       ],
       visionModels: [
-        modelEntry('accounts/fireworks/models/qwen2p5-vl-32b-instruct', 'Qwen 2.5 VL 32B', 128000)
+        modelEntry('accounts/fireworks/models/qwen3p8-27b', 'Qwen 3.8 27B (Vision)', 131072)
       ]
     },
 
@@ -575,14 +612,15 @@ const ProviderCatalog = (() => {
       apiKeyField: 'novitaApiKey',
       keyPlaceholder: 'sk_...',
       credentialUrl: 'https://novita.ai/settings/key-management',
-      defaultTextModel: 'deepseek/deepseek-v3-0324',
-      defaultVisionModel: 'qwen/qwen2.5-vl-72b-instruct',
+      defaultTextModel: 'deepseek/deepseek-v4-flash-0731',
+      defaultVisionModel: 'qwen/qwen3.8-27b',
       textModels: [
-        modelEntry('deepseek/deepseek-v3-0324', 'DeepSeek V3', 131072),
-        modelEntry('meta-llama/llama-3.3-70b-instruct', 'Llama 3.3 70B', 131072)
+        modelEntry('deepseek/deepseek-v4-flash-0731', 'DeepSeek V4 Flash', 131072),
+        modelEntry('deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro', 131072),
+        modelEntry('qwen/qwen3.8-27b', 'Qwen 3.8 27B', 131072)
       ],
       visionModels: [
-        modelEntry('qwen/qwen2.5-vl-72b-instruct', 'Qwen 2.5 VL 72B', 32768)
+        modelEntry('qwen/qwen3.8-27b', 'Qwen 3.8 27B (Vision)', 131072)
       ]
     },
 
@@ -601,14 +639,16 @@ const ProviderCatalog = (() => {
       modelListing: {
         cloudflareSearch: true
       },
-      defaultTextModel: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-      defaultVisionModel: '@cf/meta/llama-3.2-11b-vision-instruct',
+      defaultTextModel: '@cf/moonshotai/kimi-k2.6',
+      defaultVisionModel: '@cf/google/gemma-4-31b-it',
       textModels: [
-        modelEntry('@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'Llama 3.3 70B Fast', 131072),
-        modelEntry('@cf/qwen/qwen2.5-coder-32b-instruct', 'Qwen 2.5 Coder 32B', 32768)
+        modelEntry('@cf/moonshotai/kimi-k2.6', 'Kimi K2.6 (Workers AI)', 262144),
+        modelEntry('@cf/openai/gpt-oss-120b', 'GPT-OSS 120B (Workers AI)', 131072),
+        modelEntry('@cf/google/gemma-4-31b-it', 'Gemma 4 31B (Workers AI)', 262144)
       ],
       visionModels: [
-        modelEntry('@cf/meta/llama-3.2-11b-vision-instruct', 'Llama 3.2 11B Vision', 128000)
+        modelEntry('@cf/google/gemma-4-31b-it', 'Gemma 4 31B Vision', 262144),
+        modelEntry('@cf/moonshotai/kimi-k2.6', 'Kimi K2.6 Vision', 262144)
       ]
     },
 
@@ -621,14 +661,15 @@ const ProviderCatalog = (() => {
       baseUrl: 'https://api.z.ai/api/coding/paas/v4',
       apiKeyField: 'zaiApiKey',
       keyPlaceholder: 'Clé Z.ai...',
-      defaultTextModel: 'glm-4.7',
-      defaultVisionModel: 'glm-4.6v',
+      defaultTextModel: 'glm-5.2',
+      defaultVisionModel: 'glm-5.3-flash',
       textModels: [
-        modelEntry('glm-4.7', 'GLM-4.7', 128000),
-        modelEntry('glm-4.5', 'GLM-4.5', 128000)
+        modelEntry('glm-5.2', 'GLM-5.2', 200000),
+        modelEntry('glm-5.3-flash', 'GLM-5.3 Flash', 1048576)
       ],
       visionModels: [
-        modelEntry('glm-4.6v', 'GLM-4.6V (Vision)', 128000)
+        modelEntry('glm-5.3-flash', 'GLM-5.3 Flash (Vision)', 1048576),
+        modelEntry('glm-5.2', 'GLM-5.2 (Vision)', 200000)
       ]
     },
 
@@ -643,14 +684,16 @@ const ProviderCatalog = (() => {
       keyPlaceholder: 'sk-...',
       supportsCustomBaseUrl: true,
       maxTokensField: 'max_completion_tokens',
-      defaultTextModel: 'qwen-plus',
-      defaultVisionModel: 'qwen-vl-plus',
+      defaultTextModel: 'qwen3.7-plus',
+      defaultVisionModel: 'qwen3.8-vl',
       textModels: [
-        modelEntry('qwen-plus', 'Qwen Plus', 131072),
-        modelEntry('qwen-max', 'Qwen Max', 131072)
+        modelEntry('qwen3.7-plus', 'Qwen 3.7 Plus', 131072),
+        modelEntry('qwen3-max', 'Qwen 3 Max', 131072),
+        modelEntry('qwen3-coder-plus', 'Qwen 3 Coder Plus', 131072)
       ],
       visionModels: [
-        modelEntry('qwen-vl-plus', 'Qwen VL Plus', 131072)
+        modelEntry('qwen3.8-vl', 'Qwen 3.8 VL', 131072),
+        modelEntry('qwen3-vl-plus', 'Qwen 3 VL Plus', 131072)
       ]
     },
 
@@ -665,12 +708,14 @@ const ProviderCatalog = (() => {
       keyPlaceholder: 'nr-...',
       credentialUrl: 'https://router.bynara.id/keys',
       supportsCustomBaseUrl: true,
-      defaultTextModel: 'auto',
-      defaultVisionModel: 'auto',
+      defaultTextModel: 'kimi-k3-free',
+      defaultVisionModel: 'kimi-k3-free',
       textModels: [
+        modelEntry('kimi-k3-free', 'Kimi K3 (Free)', 262144, true),
         modelEntry('auto', 'NaraRoute Auto', 128000)
       ],
       visionModels: [
+        modelEntry('kimi-k3-free', 'Kimi K3 Vision (Free)', 262144, true),
         modelEntry('auto', 'NaraRoute Auto (Vision)', 128000)
       ]
     },
@@ -685,14 +730,16 @@ const ProviderCatalog = (() => {
       apiKeyField: 'ollamaCloudApiKey',
       keyPlaceholder: 'Clé Ollama Cloud...',
       credentialUrl: 'https://ollama.com/settings/keys',
-      defaultTextModel: 'gpt-oss:120b',
-      defaultVisionModel: 'qwen3-vl:235b',
+      defaultTextModel: 'qwen3-coder:480b',
+      defaultVisionModel: 'gemma4:31b',
       textModels: [
+        modelEntry('qwen3-coder:480b', 'Qwen 3 Coder 480B', 262144),
         modelEntry('gpt-oss:120b', 'GPT-OSS 120B', 131072),
-        modelEntry('deepseek-v3.1:671b', 'DeepSeek V3.1 671B', 131072)
+        modelEntry('gemma4:31b', 'Gemma 4 31B', 262144)
       ],
       visionModels: [
-        modelEntry('qwen3-vl:235b', 'Qwen 3 VL 235B', 131072)
+        modelEntry('gemma4:31b', 'Gemma 4 31B (Vision)', 262144),
+        modelEntry('qwen3.8:27b', 'Qwen 3.8 27B (Vision)', 131072)
       ]
     },
 
@@ -702,21 +749,23 @@ const ProviderCatalog = (() => {
       category: 'cloud',
       local: false,
       tierLabel: 'Générique',
-      baseUrl: 'https://api.anthropic.com/v1',
+      baseUrl: '',
       apiKeyField: 'anthropicCompatibleApiKey',
-      keyPlaceholder: 'sk-ant-...',
+      keyPlaceholder: 'Clé ou jeton API du serveur...',
+      baseUrlPlaceholder: 'https://votre-serveur.example.com/v1 ou http://127.0.0.1:8082/v1',
       supportsCustomBaseUrl: true,
+      requiresBaseUrl: true,
       allowsLoopbackBaseUrl: true,
+      normalizeV1: true,
+      genericProtocolConnector: true,
       messagesPath: '/messages',
-      defaultTextModel: 'claude-sonnet-5-5',
-      defaultVisionModel: 'claude-sonnet-5-5',
+      defaultTextModel: 'auto',
+      defaultVisionModel: 'auto',
       textModels: [
-        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5', 200000),
-        modelEntry('claude-opus-5-5', 'Claude Opus 5.5', 200000)
+        modelEntry('auto', 'Modèle du serveur (/v1/models)', 200000)
       ],
       visionModels: [
-        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5 (Vision)', 200000),
-        modelEntry('claude-opus-5-5', 'Claude Opus 5.5 (Vision)', 200000)
+        modelEntry('auto', 'Modèle vision du serveur (/v1/models)', 200000)
       ]
     },
 
@@ -732,21 +781,21 @@ const ProviderCatalog = (() => {
       supportsCustomBaseUrl: true,
       messagesPath: '/messages?beta=true',
       sendBearerAuth: true,
-      defaultTextModel: 'claude-fable-5',
-      defaultVisionModel: 'claude-fable-5',
+      defaultTextModel: 'claude-fable-5-2',
+      defaultVisionModel: 'claude-fable-5-2',
       textModels: [
-        modelEntry('claude-fable-5', 'Claude Fable 5', 200000),
-        modelEntry('claude-opus-5', 'Claude Opus 5', 200000),
-        modelEntry('claude-opus-4-8', 'Claude Opus 4.8', 200000),
-        modelEntry('claude-opus-4-6', 'Claude Opus 4.6', 200000),
+        modelEntry('claude-fable-5-2', 'Claude Fable 5.2', 1000000),
+        modelEntry('claude-opus-5-5', 'Claude Opus 5.5', 1000000),
+        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5', 1000000),
         modelEntry('glm-5.2', 'GLM-5.2', 200000),
-        modelEntry('gpt-5.5', 'GPT-5.5', 200000),
-        modelEntry('gpt-5.6-sol', 'GPT-5.6 Sol', 200000),
-        modelEntry('kimi-k3', 'Kimi K3', 200000)
+        modelEntry('gpt-5.6-sol', 'GPT-5.6 Sol', 256000),
+        modelEntry('gpt-5.5', 'GPT-5.5', 256000),
+        modelEntry('kimi-k3', 'Kimi K3', 262144)
       ],
       visionModels: [
-        modelEntry('claude-fable-5', 'Claude Fable 5 (Vision)', 200000),
-        modelEntry('claude-opus-5', 'Claude Opus 5 (Vision)', 200000)
+        modelEntry('claude-fable-5-2', 'Claude Fable 5.2 (Vision)', 1000000),
+        modelEntry('claude-opus-5-5', 'Claude Opus 5.5 (Vision)', 1000000),
+        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5 (Vision)', 1000000)
       ]
     },
 
@@ -809,14 +858,16 @@ const ProviderCatalog = (() => {
       supportsCustomBaseUrl: true,
       allowsLoopbackBaseUrl: true,
       normalizeV1: true,
-      defaultTextModel: 'llama3.2',
-      defaultVisionModel: 'llama3.2-vision',
+      defaultTextModel: 'qwen3.8:27b',
+      defaultVisionModel: 'gemma4:12b',
       textModels: [
-        modelEntry('llama3.2', 'Llama 3.2', 128000, true),
-        modelEntry('qwen3:8b', 'Qwen 3 8B', 128000, true)
+        modelEntry('qwen3.8:27b', 'Qwen 3.8 27B', 131072, true),
+        modelEntry('gemma4:12b', 'Gemma 4 12B', 262144, true),
+        modelEntry('gpt-oss:20b', 'GPT-OSS 20B', 131072, true)
       ],
       visionModels: [
-        modelEntry('llama3.2-vision', 'Llama 3.2 Vision', 128000, true)
+        modelEntry('gemma4:12b', 'Gemma 4 12B (Vision)', 262144, true),
+        modelEntry('qwen3.8:27b', 'Qwen 3.8 27B (Vision)', 131072, true)
       ]
     }
   };

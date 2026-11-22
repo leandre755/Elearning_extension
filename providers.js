@@ -1033,6 +1033,7 @@ const QuizProviders = (() => {
   // Alimenté statiquement au démarrage et mis à jour après une sync dynamique (ModelRegistry).
   // Invariant : toujours retourne une valeur >= 1000 depuis getModelContextLimit.
   const _contextWindowCache = new Map();
+  const _syncedModelsCache = new Map();
 
   // ── NOTE : _initStaticContextCache() est appelée juste avant le return du module.
   //           Le bloc ci-dessus (void) était un placeholder provisoire — supprimé.
@@ -1062,12 +1063,19 @@ const QuizProviders = (() => {
    */
   function warmContextCache(providerKey, models) {
     if (!Array.isArray(models)) return;
+    const normKey = _normalizeProviderKey(providerKey) || String(providerKey || '').toLowerCase();
+    const realModels = models.filter(
+      m => m && typeof m.id === 'string' && m.id.trim().length > 0 && m.id.trim().toLowerCase() !== 'auto'
+    );
+    if (normKey && realModels.length > 0) {
+      _syncedModelsCache.set(normKey, realModels);
+    }
     for (const m of models) {
       if (m.id && m.contextWindow > 0) {
-        _contextWindowCache.set(`${providerKey}:${m.id}`, m.contextWindow);
+        _contextWindowCache.set(`${normKey || providerKey}:${m.id}`, m.contextWindow);
       }
     }
-    console.log(`🔥 warmContextCache [${providerKey}]: ${models.length} entrées chargées.`);
+    console.log(`🔥 warmContextCache [${normKey || providerKey}]: ${models.length} entrées chargées.`);
   }
 
   /**
@@ -1212,10 +1220,27 @@ const QuizProviders = (() => {
     if (!provider) throw new Error(`Provider inconnu: ${providerKey}`);
 
     const nestedOverride = overrides?.[normalizedKey];
-    if (hasImages) {
-      return nestedOverride?.vision || overrides?.[`${normalizedKey}_visionModel`] || provider.defaultVisionModel;
+    const explicitOverride = hasImages
+      ? (nestedOverride?.vision || overrides?.[`${normalizedKey}_visionModel`])
+      : (nestedOverride?.text || overrides?.[`${normalizedKey}_textModel`]);
+    if (typeof explicitOverride === 'string' && explicitOverride.trim().length > 0) {
+      return explicitOverride.trim();
     }
-    return nestedOverride?.text || overrides?.[`${normalizedKey}_textModel`] || provider.defaultTextModel;
+
+    if (provider.genericProtocolConnector === true) {
+      const synced = _syncedModelsCache.get(normalizedKey);
+      if (Array.isArray(synced) && synced.length > 0) {
+        const match = hasImages
+          ? (synced.find(m => m && m.vision === true && typeof m.id === 'string' && m.id.trim()) ||
+             synced.find(m => m && typeof m.id === 'string' && m.id.trim()))
+          : synced.find(m => m && typeof m.id === 'string' && m.id.trim());
+        if (match && match.id) {
+          return match.id.trim();
+        }
+      }
+    }
+
+    return hasImages ? provider.defaultVisionModel : provider.defaultTextModel;
   }
 
   // ──────────────────────────────────────────────
@@ -2070,8 +2095,16 @@ const QuizProviders = (() => {
         console.warn(`   ⚠️ ${provider.name} (Modèle principal ${model}) a échoué: ${error.message}`);
 
         // Tentative de fallback interne sur les modèles alternatifs du même provider
-        const altModels = (hasImages ? (provider.visionModels || []) : (provider.textModels || []))
-          .filter(m => m.id !== model);
+        const syncedCandidates = provider.genericProtocolConnector === true
+          ? (_syncedModelsCache.get(providerKey) || [])
+          : [];
+        const baseCandidates = syncedCandidates.length > 0
+          ? (hasImages && syncedCandidates.some(m => m && m.vision === true)
+              ? syncedCandidates.filter(m => m && m.vision === true)
+              : syncedCandidates)
+          : (hasImages ? (provider.visionModels || []) : (provider.textModels || []));
+        const altModels = baseCandidates
+          .filter(m => m && typeof m.id === 'string' && m.id !== model);
 
         let successWithAlt = false;
         let altText = '';
@@ -2520,7 +2553,7 @@ const ModelRegistry = (() => {
     if (rawObj?.capabilities?.vision === true || rawObj?.capabilities?.image_input === true) return true;
     if (Array.isArray(rawObj?.input_modalities) && rawObj.input_modalities.includes('image')) return true;
     if (Array.isArray(rawObj?.architecture?.input_modalities) && rawObj.architecture.input_modalities.includes('image')) return true;
-    return /vision|-vl\b|gpt-4o|gpt-4\.1|claude-|gemini-|grok-4|grok-2-vision/i.test(id);
+    return /vision|-vl\b|gpt-5|claude-|gemini-|gemma-4|grok-4|kimi-k3|glm-5|qwen3\.8/i.test(id);
   }
 
   function _extractOpenAIContextWindow(rawObj) {
@@ -2750,6 +2783,7 @@ const ModelRegistry = (() => {
 
     // Si le cache est encore valide, on ne re-synchronise pas (sauf force: true)
     if (!forceSync && _isCacheValid(cache, normKey)) {
+      QuizProviders.warmContextCache(normKey, cache[normKey].models);
       console.log(`✅ ModelRegistry [${normKey}]: cache valide (< 24h), pas de resync.`);
       return cache[normKey].models;
     }
@@ -2805,11 +2839,16 @@ const ModelRegistry = (() => {
    * @returns {Promise<Array|null>}
    */
   async function getCachedModels(providerKey) {
-    const cache = await _loadCache();
-    if (!_isCacheValid(cache, providerKey)) {
+    if (typeof providerKey !== 'string' || !providerKey.trim()) {
       return null;
     }
-    return cache[providerKey].models;
+    const normKey = providerKey.trim().toLowerCase();
+    const cache = await _loadCache();
+    if (!_isCacheValid(cache, normKey)) {
+      return null;
+    }
+    QuizProviders.warmContextCache(normKey, cache[normKey].models);
+    return cache[normKey].models;
   }
 
   /**

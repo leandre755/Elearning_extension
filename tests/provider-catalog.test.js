@@ -120,6 +120,8 @@ test('Catalog integrity: 40 total providers (5 core + 35 catalog), OS/OAuth excl
     'DEFAULT_PRIORITY must remain the 5 core providers'
   );
 
+  const FORBIDDEN_LEGACY_MODEL_RE = /(?:gpt-4o|gpt-4\.1|gpt-3\.5|claude-3|claude-(?:sonnet|opus|haiku)-4|llama-?3|qwen2(?:\.5|p5)|grok-[23]|deepseek-v3|glm-4|minimax-m2\.5|kimi-k2\.5|kimi-k2-0905)/i;
+
   const seenFields = new Set();
   for (const [id, def] of Object.entries(QuizProviders.PROVIDERS)) {
     assert.ok(def && typeof def.name === 'string' && def.name.trim(), `${id} must have a non-empty name`);
@@ -127,6 +129,32 @@ test('Catalog integrity: 40 total providers (5 core + 35 catalog), OS/OAuth excl
     assert.ok(typeof def.apiKeyField === 'string' && def.apiKeyField.trim(), `${id} missing apiKeyField`);
     assert.equal(seenFields.has(def.apiKeyField), false, `Duplicate apiKeyField: ${def.apiKeyField}`);
     seenFields.add(def.apiKeyField);
+
+    assert.equal(
+      FORBIDDEN_LEGACY_MODEL_RE.test(String(def.defaultTextModel || '')),
+      false,
+      `${id}.defaultTextModel "${def.defaultTextModel}" uses a deprecated pre-2026 model ID`
+    );
+    assert.equal(
+      FORBIDDEN_LEGACY_MODEL_RE.test(String(def.defaultVisionModel || '')),
+      false,
+      `${id}.defaultVisionModel "${def.defaultVisionModel}" uses a deprecated pre-2026 model ID`
+    );
+    for (const m of [...(def.textModels || []), ...(def.visionModels || [])]) {
+      assert.equal(
+        FORBIDDEN_LEGACY_MODEL_RE.test(String(m?.id || '')),
+        false,
+        `${id} model "${m?.id}" uses a deprecated pre-2026 model ID`
+      );
+    }
+  }
+
+  for (const genericKey of ['openai_compatible', 'anthropic_compatible']) {
+    const gDef = QuizProviders.PROVIDERS[genericKey];
+    assert.equal(gDef.baseUrl, '', `${genericKey} must not hardcode a vendor baseUrl`);
+    assert.equal(gDef.requiresBaseUrl, true, `${genericKey} must require an explicit endpoint baseUrl`);
+    assert.equal(gDef.genericProtocolConnector, true, `${genericKey} must be marked as a generic protocol connector`);
+    assert.equal(gDef.defaultTextModel, 'auto', `${genericKey} defaultTextModel must be protocol-neutral 'auto'`);
   }
 });
 
@@ -188,6 +216,18 @@ test('URL normalization, base URL resolution, and isProviderConfigured contracts
     providerConfigs: { azure_openai: { baseUrl: 'https://demo.openai.azure.com/openai/v1' } }
   }), true);
 
+  assert.equal(QuizProviders.isProviderConfigured('openai_compatible', { openaiCompatibleApiKey: 'test-oc' }), false);
+  assert.equal(QuizProviders.isProviderConfigured('openai_compatible', {
+    openaiCompatibleApiKey: 'test-oc',
+    providerConfigs: { openai_compatible: { baseUrl: 'https://gateway.example.com/v1' } }
+  }), true);
+
+  assert.equal(QuizProviders.isProviderConfigured('anthropic_compatible', { anthropicCompatibleApiKey: 'test-ac' }), false);
+  assert.equal(QuizProviders.isProviderConfigured('anthropic_compatible', {
+    anthropicCompatibleApiKey: 'test-ac',
+    providerConfigs: { anthropic_compatible: { baseUrl: 'http://127.0.0.1:8082/v1' } }
+  }), true);
+
   assert.equal(QuizProviders.isProviderConfigured('ollama', {}), false);
   assert.equal(QuizProviders.isProviderConfigured('ollama', { providerConfigs: { ollama: { enabled: false } } }), false);
   assert.equal(QuizProviders.isProviderConfigured('ollama', { providerConfigs: { ollama: { enabled: true } } }), true);
@@ -217,7 +257,7 @@ test('QuizProviders.callProvider routes headers, URLs, max_completion_tokens, An
     assert.equal(typeof call.bodyJson.max_tokens, 'number');
 
     // cloudflare
-    await QuizProviders.callProvider('cloudflare', 'tok-cf', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'Ping', [], {
+    await QuizProviders.callProvider('cloudflare', 'tok-cf', '@cf/moonshotai/kimi-k2.6', 'Ping', [], {
       providerConfig: { accountId: 'cf-acc-01' }
     });
     call = fetchCalls.at(-1);
@@ -245,7 +285,7 @@ test('QuizProviders.callProvider routes headers, URLs, max_completion_tokens, An
     }
 
     // github_models
-    await QuizProviders.callProvider('github_models', 'tok-gh', 'openai/gpt-4.1-mini', 'Ping', []);
+    await QuizProviders.callProvider('github_models', 'tok-gh', 'openai/gpt-5.5', 'Ping', []);
     call = fetchCalls.at(-1);
     assert.equal(call.url, 'https://models.github.ai/inference/chat/completions');
     assert.equal(call.headers.Accept, 'application/vnd.github+json');
@@ -253,7 +293,7 @@ test('QuizProviders.callProvider routes headers, URLs, max_completion_tokens, An
     assert.equal(call.headers.Authorization, 'Bearer tok-gh');
 
     // agentrouter (Claude protocol with /messages?beta=true + Bearer + x-api-key)
-    const arRes = await QuizProviders.callProvider('agentrouter', 'tok-ar', 'claude-fable-5', 'Ping', []);
+    const arRes = await QuizProviders.callProvider('agentrouter', 'tok-ar', 'claude-fable-5-2', 'Ping', []);
     assert.equal(arRes, 'claude-ok');
     call = fetchCalls.at(-1);
     assert.equal(call.url, 'https://ps.air-outer.com/v1/messages?beta=true');
@@ -271,7 +311,7 @@ test('QuizProviders.callProvider routes headers, URLs, max_completion_tokens, An
     assert.equal(call.headers.Authorization, undefined);
 
     // ollama local with empty key uses fallback static key & /v1 normalization
-    await QuizProviders.callProvider('ollama', '', 'llama3.2', 'Ping', [], {
+    await QuizProviders.callProvider('ollama', '', 'qwen3.8:27b', 'Ping', [], {
       providerConfig: { enabled: true }
     });
     call = fetchCalls.at(-1);
@@ -292,16 +332,16 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
         return { status: 200, body: { data: [{ id: 'openrouter/auto', context_length: 128000 }] } };
       }
       if (req.url === 'http://localhost:11434/v1/models') {
-        return { status: 200, body: { data: [{ id: 'qwen3:8b', name: 'Qwen 3 8B' }] } };
+        return { status: 200, body: { data: [{ id: 'qwen3.8:27b', name: 'Qwen 3.8 27B' }] } };
       }
       if (req.url === 'https://api.x.ai/v1/language-models') {
-        return { status: 200, body: { models: [{ id: 'grok-3', aliases: ['grok-3-latest'], max_input_tokens: 131072 }] } };
+        return { status: 200, body: { models: [{ id: 'grok-4.5', aliases: ['grok-4.5-latest'], max_input_tokens: 256000 }] } };
       }
       if (req.url === 'https://api.together.xyz/v1/models' || req.url === 'https://api.together.ai/v1/models') {
         return {
           status: 200,
           body: [
-            { id: 'meta-llama/Llama-4-Maverick', type: 'chat', context_length: 524288 },
+            { id: 'zai-org/GLM-5.2', type: 'chat', context_length: 200000 },
             { id: 'black-forest-labs/FLUX.1', type: 'image' }
           ]
         };
@@ -310,7 +350,7 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
         return {
           status: 200,
           body: [
-            { id: 'openai/gpt-4.1-mini', capabilities: ['streaming', 'tool-calling'] },
+            { id: 'openai/gpt-5.5', capabilities: ['streaming', 'tool-calling'] },
             { id: 'legacy/no-tools', capabilities: ['streaming'] }
           ]
         };
@@ -318,7 +358,7 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
       if (req.url === 'https://api.cloudflare.com/client/v4/accounts/cf-acc-42/ai/models/search?format=openrouter') {
         return {
           status: 200,
-          body: { data: [{ id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', name: 'Llama 3.3 70B Fast' }] }
+          body: { data: [{ id: '@cf/moonshotai/kimi-k2.6', name: 'Kimi K2.6' }] }
         };
       }
       if (req.url === 'https://claude-proxy.example.com/v1/models') {
@@ -337,20 +377,20 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
     assert.deepEqual(orModels.map(m => m.id), ['openrouter/auto']);
 
     const ollamaModels = await ModelRegistry.syncProviderModels('ollama', '', { enabled: true }, { force: true });
-    assert.deepEqual(ollamaModels.map(m => m.id), ['qwen3:8b']);
+    assert.deepEqual(ollamaModels.map(m => m.id), ['qwen3.8:27b']);
     assert.equal(ollamaModels[0].free, true);
 
     const xaiModels = await ModelRegistry.syncProviderModels('xai', 'tok-xai', null, { force: true });
-    assert.deepEqual(xaiModels.map(m => m.id), ['grok-3', 'grok-3-latest']);
+    assert.deepEqual(xaiModels.map(m => m.id), ['grok-4.5', 'grok-4.5-latest']);
 
     const togetherModels = await ModelRegistry.syncProviderModels('together', 'tok-tg', null, { force: true });
-    assert.deepEqual(togetherModels.map(m => m.id), ['meta-llama/Llama-4-Maverick']);
+    assert.deepEqual(togetherModels.map(m => m.id), ['zai-org/GLM-5.2']);
 
     const ghModels = await ModelRegistry.syncProviderModels('github_models', 'tok-gh', null, { force: true });
-    assert.deepEqual(ghModels.map(m => m.id), ['openai/gpt-4.1-mini']);
+    assert.deepEqual(ghModels.map(m => m.id), ['openai/gpt-5.5']);
 
     const cfModels = await ModelRegistry.syncProviderModels('cloudflare', 'tok-cf', { accountId: 'cf-acc-42' }, { force: true });
-    assert.deepEqual(cfModels.map(m => m.id), ['@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
+    assert.deepEqual(cfModels.map(m => m.id), ['@cf/moonshotai/kimi-k2.6']);
 
     const acModels = await ModelRegistry.syncProviderModels('anthropic_compatible', 'tok-ac', {
       baseUrl: 'https://claude-proxy.example.com/v1'
@@ -359,7 +399,7 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
 
     const arModels = await ModelRegistry.syncProviderModels('agentrouter', 'tok-ar', null, { force: true });
     assert.ok(Array.isArray(arModels) && arModels.length >= QuizProviders.PROVIDERS.agentrouter.textModels.length);
-    assert.ok(arModels.some(m => m.id === 'claude-fable-5'));
+    assert.ok(arModels.some(m => m.id === 'claude-fable-5-2'));
   });
 });
 
@@ -514,7 +554,7 @@ test('BackgroundAgent._callLLMWithTools routes agentrouter, anthropic_compatible
       }
     };
 
-    const ar = await BackgroundAgent._callLLMWithTools('agentrouter', apiKeys, 'claude-fable-5', history, [], dummyTools);
+    const ar = await BackgroundAgent._callLLMWithTools('agentrouter', apiKeys, 'claude-fable-5-2', history, [], dummyTools);
     assert.equal(ar.toolCalls[0].name, 'answer_quiz');
     assert.equal(fetchCalls.at(-1).url, 'https://ps.air-outer.com/v1/messages?beta=true');
     assert.equal(fetchCalls.at(-1).headers.Authorization, 'Bearer tok-ar');
@@ -524,12 +564,12 @@ test('BackgroundAgent._callLLMWithTools routes agentrouter, anthropic_compatible
     assert.equal(ac.toolCalls[0].input || ac.toolCalls[0].args.answer, 'B');
     assert.equal(fetchCalls.at(-1).url, 'https://claude-proxy.example.com/v1/messages');
 
-    const ol = await BackgroundAgent._callLLMWithTools('ollama', apiKeys, 'llama3.2', history, [], dummyTools);
+    const ol = await BackgroundAgent._callLLMWithTools('ollama', apiKeys, 'qwen3.8:27b', history, [], dummyTools);
     assert.equal(ol.toolCalls[0].name, 'answer_quiz');
     assert.equal(fetchCalls.at(-1).url, 'http://localhost:11434/v1/chat/completions');
     assert.equal(fetchCalls.at(-1).headers.Authorization, 'Bearer ollama');
 
-    const cf = await BackgroundAgent._callLLMWithTools('cloudflare', apiKeys, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', history, [], dummyTools);
+    const cf = await BackgroundAgent._callLLMWithTools('cloudflare', apiKeys, '@cf/moonshotai/kimi-k2.6', history, [], dummyTools);
     assert.equal(cf.toolCalls[0].name, 'answer_quiz');
     assert.equal(fetchCalls.at(-1).url, 'https://api.cloudflare.com/client/v4/accounts/cf-acc-77/ai/v1/chat/completions');
     assert.equal(typeof fetchCalls.at(-1).bodyJson.max_completion_tokens, 'number');
@@ -771,7 +811,7 @@ test('Antibug regressions (pass 2): Service Worker direct fetch blocks SSRF + en
     swSandbox.QuizProviders.callProvider(
       'openai_compatible',
       'tok-untrusted-ssrf',
-      'gpt-4o-mini',
+      'auto',
       'Ping',
       [],
       { retry: false, providerConfig: { baseUrl: 'http://169.254.169.254/latest/meta-data' } }
@@ -868,4 +908,68 @@ test('Antibug regressions (pass 2): Service Worker direct fetch blocks SSRF + en
   assert.equal(uiSandbox.validateProviderBaseUrl(QpUi.PROVIDERS.openai_compatible, 'https://sub.localhost/v1').ok, false);
   assert.equal(uiSandbox.validateProviderBaseUrl(QpUi.PROVIDERS.openai_compatible, 'https://224.0.0.1/v1').ok, false);
   assert.equal(uiSandbox.validateProviderBaseUrl(QpUi.PROVIDERS.anthropic_compatible, 'http://127.0.0.1:8082/v1').ok, true);
+
+  // Generic protocol connector synced-model warming across cache hits, getCachedModels, and preWarmProviders
+  await withMockEnv({
+    storageInit: {
+      modelMetadataCache: {
+        openai_compatible: {
+          lastSync: Date.now(),
+          models: [
+            { id: 'vllm-primary-text', contextWindow: 131072, vision: false },
+            { id: 'vllm-secondary-vision', contextWindow: 131072, vision: true }
+          ]
+        }
+      }
+    },
+    fetchHandler: async (req) => {
+      if (req.bodyJson && req.bodyJson.model === 'vllm-primary-text') {
+        return { status: 500, body: { error: { message: 'primary down' } } };
+      }
+      return { status: 200, body: { choices: [{ message: { content: 'fallback-synced-ok' } }] } };
+    }
+  }, async () => {
+    const { QuizProviders: QpCache, ModelRegistry: MrCache } = loadModules();
+    assert.equal(QpCache.getModelForContext('openai_compatible', false, {}), 'auto');
+
+    // Cache hit via getCachedModels (with uppercase key) warms _syncedModelsCache
+    const cachedList = await MrCache.getCachedModels('OPENAI_COMPATIBLE');
+    assert.equal(cachedList?.length, 2);
+    assert.equal(QpCache.getModelForContext('openai_compatible', false, {}), 'vllm-primary-text');
+    assert.equal(QpCache.getModelForContext('openai_compatible', true, {}), 'vllm-secondary-vision');
+
+    // Fresh module instance: cache hit via syncProviderModels (without force) also warms _syncedModelsCache
+    const { QuizProviders: QpHit, ModelRegistry: MrHit } = loadModules();
+    await MrHit.syncProviderModels('openai_compatible', 'tok-gw', { baseUrl: 'https://gateway.example.com/v1' });
+    assert.equal(QpHit.getModelForContext('openai_compatible', false, {}), 'vllm-primary-text');
+
+    // preWarmProviders static 'auto' fallback must never clobber previously warmed models
+    QpHit.warmContextCache('anthropic_compatible', [
+      { id: 'proxy-claude-model', contextWindow: 200000, vision: true }
+    ]);
+    await QpHit.preWarmProviders({
+      force: true,
+      config: {
+        anthropicCompatibleApiKey: 'tok-ac',
+        providerConfigs: { anthropic_compatible: { baseUrl: 'https://proxy.example.com/v1' } }
+      }
+    });
+    assert.equal(QpHit.getModelForContext('anthropic_compatible', false, {}), 'proxy-claude-model');
+
+    // smartRoute uses synced primary model and falls back to second synced model on failure
+    const routed = await QpHit.smartRoute(
+      'Solve Q1',
+      [],
+      {
+        openaiCompatibleApiKey: 'tok-gw',
+        providerConfigs: { openai_compatible: { baseUrl: 'https://gateway.example.com/v1' } }
+      },
+      ['openai_compatible'],
+      {},
+      { retry: false }
+    );
+    assert.equal(routed.provider, 'openai_compatible');
+    assert.equal(routed.model, 'vllm-secondary-vision');
+    assert.equal(routed.text, 'fallback-synced-ok');
+  });
 });
