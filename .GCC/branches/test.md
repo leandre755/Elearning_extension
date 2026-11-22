@@ -202,3 +202,33 @@
   - Playwright + `/bin/google-chrome` sur `settings.html` : `#showConfidenceBadge` visible et coché par défaut dans `01 // MARQUAGE`, sauvegarde `showConfidenceBadge: false`, rechargement `loadSettings()` rétablit l'état décoché (`PLAYWRIGHT_BADGE_TOGGLE_OK`).
   - Revue indépendante `antibug-reviewer` (`1f4ecaaa`) sur le diff stagé : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
 -[Antigravity-app, Gemini 4 Neon, medium]
+
+### Run: Intégration des 35 fournisseurs HTTP REST `fcc-server` (40 providers au total) — Tests unitaires, Playwright Chrome & Audits ANTIBUG
+- **Date**: 2026-11-22
+- **Target**: `provider-catalog.js`, `providers.js`, `background.js`, `background-agent.js`, `content.js`, `schema-detector.js`, `settings.html`, `settings.css`, `settings.js`, `popup.html`, `popup.js`, `tests/e2e-regressions.test.js`, `tests/provider-catalog.test.js` (commit `f61df5b`)
+- **Status**: PASS
+- **Output / Evidence**:
+  - **Tests unitaires & protocolaires (`node --test --test-concurrency=1 tests/provider-catalog.test.js` → `8/8 PASS`)** :
+    1. `Catalog integrity`: `40` fournisseurs dans `QuizProviders.PROVIDERS` (`5` cœur + `35` catalogue), `openai`/`vertex`/`antigravity` exclus, `40` `apiKeyField` uniques, `DEFAULT_PRIORITY` inchangé.
+    2. `URL normalization, base URL resolution, and isProviderConfigured`: normalisation `/v1` (`ollama`, `lmstudio`, `llamacpp`, `bedrock`), interpolation `accountId` (`cloudflare`), `requiresBaseUrl` (`azure_openai`), routage `codestral.mistral.ai`, matrice `isProviderConfigured`.
+    3. `QuizProviders.callProvider`: vérification URL/headers/payload sur `open_router`, `cloudflare` (`max_completion_tokens`), `azure_openai`, `cerebras`, `kimi_code`, `minimax`, `alibaba`, `commandcode`, `tokenrouter`, `github_models` (`Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2026-03-10`), `agentrouter` (`/messages?beta=true` + Bearer + `x-api-key`), `anthropic_compatible`, `ollama`.
+    4. `ModelRegistry.syncProviderModels`: formats `open_router`, `ollama`, `xai` (`/language-models` + `aliases`), `together` (filtre `type === 'chat'`), `github_models` (`models.github.ai/catalog/models`), `cloudflare` (`/ai/models/search?format=openrouter`), `anthropic_compatible`, et fallback statique `agentrouter`.
+    5. `background.js Anti-SSRF`: `isAllowedLLMUrl` (hôtes HTTPS statiques, regex `bedrock-mantle`/`openai.azure.com`, origines HTTPS publiques dans `providerConfigs`, loopback limité aux locaux activés et connecteurs `allowsLoopbackBaseUrl` ; rejet `169.254.169.254`, `10.0.0.1`, `192.168.1.50`, userinfo, ports non-443, loopback non activé), `handleFetchLLM` (`redirect: 'error'`), et `isBlockedImageHost` intact.
+    6. `BackgroundAgent._callLLMWithTools`: appels avec outils sur `agentrouter`, `anthropic_compatible`, `ollama`, `cloudflare`.
+    7. `Antibug regressions (pass 1)`: `smartRoute` et `crossValidateAnswers` atteignent les fournisseurs du catalogue quand `providerOrder` est absent ; `settings.js:testProvider` efface bien un override `customModels` périmé lorsque le champ DOM est vidé.
+    8. `Antibug regressions (pass 2 & 3)`: `crossValidateAnswers` fonctionne avec `providerOrder: []` ou la liste historique des 5 providers cœur ; `_enforceDirectFetchPolicy` et `BackgroundAgent.solve` dans le Service Worker bloquent les tentatives SSRF IPC (`169.254.169.254`) et forcent `redirect: 'error'` ; `submitQuizFeedback` préserve les configurations plates `ConfigCache.getAll()` tout en écartant un `providerConfigs` non fiable ; `validateProviderBaseUrl` bloque `.localhost` et `>= 224.0.0.0/4`.
+  - **Suite globale (`node --test --test-concurrency=1 tests/*.test.js`)** :
+    ```text
+    ℹ tests 125 | ℹ suites 0 | ℹ pass 125 | ℹ fail 0 | ℹ cancelled 0 | ℹ skipped 0 | ℹ duration_ms 17946.84752
+    ```
+    (Note : 1 erreur IPC transitoire du runner Node `v26.2.0` `Unable to deserialize cloned data due to invalid or unsupported version` observée une fois lors d'un lancement multi-fichiers sous charge CPU, non reproduite sur les exécutions suivantes.)
+  - **Quality Gate (`QUALITY_GATE_SCOPE=full bash .githooks/pre-commit` & staged `bash .githooks/pre-commit`)** : `7/7 ✅` (exit `0`).
+  - **Vérification E2E & Visuelle Playwright Chrome (`/bin/google-chrome`, `1024×900`, thèmes clair et sombre)** :
+    - `40` `.key-card` rendues (`#providerFilterCount` = `40 / 40`), recherche (`"ollama"` → `2`, `"cloudflare"` → `1`), filtres (`Locaux` = `3`, `Cloud` = `37`, `Configurés` = `0` → `4`), sauvegarde et rechargement de `open_router`, `cloudflare` (`accountId`), `anthropic_compatible` (`http://127.0.0.1:8082/v1`) et `ollama` (`enabled: true`), `#priorityList` = `4`, `#modelOverrides` = `4`, `popup.html` `#connectionStatus` = `'4 clés'`, `0` erreur console/page/404.
+    - Défaut CSS corrigé lors de l'inspection visuelle des captures : `.setting-item label` (`0,1,1`) écrasait `.checkbox-label` (`0,1,0`) en `display: block` dans `settings.css:341` ; sélecteur relevé à `.setting-item label.checkbox-label, .checkbox-label` (`getComputedStyle` = `'flex'`).
+  - **Cycles de revue forensique `antibug-reviewer` (contexte frais)** :
+    - Passe 1 (`7a7110f7`) : 3 défauts (fallback `smartRoute`/`schema-detector.js`, `_getStrictlyConfiguredProviders` sans `providerOrder`, et `testProvider` modèle périmé) → corrigés + test 7.
+    - Passe 2 (`ee8bcb64` & `eba3903f`) : 2 défauts (SSRF/redirect sur `fetch` direct du Service Worker via `BackgroundAgent` + `providerOrder` vide `[]` ou historique 5-cœur dans `_getStrictlyConfiguredProviders`) → corrigés + test 8.
+    - Passe 3 (`73feb0e7`) : 2 défauts (`hydrateTrustedConfig` écrasant les configs plates `ConfigCache.getAll()` de `submitQuizFeedback`, et rejet `.localhost`/multicast `>= 224` dans `settings.js:validateProviderBaseUrl`) → corrigés + test 8 étendu.
+    - Passe 4 finale (`5fb6e6dd-e00c-4541-8908-1d310dd6667c`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+-[Antigravity-app, Gemini 4 Argon, medium]
