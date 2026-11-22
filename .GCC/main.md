@@ -55,12 +55,13 @@ Le projet contient les principaux composants suivants :
 - ✅ Done: **2026-11-20** : Déploiement complet `coding-stuff` en mode Local-Only Review (`.githooks/*`, `.gouvernance/*`, `.semgrep/rules.yml`, `tests/invariants.test.js`, `ARCHITECTURE.md`, profils Claude Code / Codex / Antigravity, durcissement Anti-SSRF & logs URL dans `background.js` / `providers.js`).
 -[Antigravity-app, Gemini 4 Hydrogen, high]
 - ✅ Done: **2026-11-20 → 2026-11-22** : Mise à jour des catalogues de modèles 2026-11 (`1e3f4ce`), nouvelles icônes v4 (`d2f0084`), omission de `temperature` dépréciée sur Claude 5.x/Opus 4.7+ et utilisation de la température par défaut provider (`d0248d0`), puis exécution intégrale de `.GCC/branches/plan_swarm_core_sprint.md` en 6 commits atomiques vérifiés par `antibug` (`ba29bd3` Lot 1 NLP/Settings, `5a838ca` Lot 2 Retry/Analytics/PreWarm, `aaea7b3` Lot 3 Shadow DOM/6 formats/`page-bridge.js`, `e9b0478` Lot 4 Domain Rules/Cross-Validation/Confidence Tiers, `9671839` Lot 5 Badges WeakMap/Auto-Submit opt-in/PreWarm trigger/Popup stats + correctifs forensic `content.js`/`highlight-manager.js`, `14bddca` Lot 6 Handlers `background.js`/`injectPageBridge` `MAIN` world + `tests/security-stealth.test.js`). Suite complète : `101/101` tests `node:test` verts + `QUALITY_GATE_SCOPE=full .githooks/pre-commit` 7/7 vert.
-- ⏳ Pending: Confirmation utilisateur pour `git push origin master` et archivage de `plan_swarm_core_sprint.md` ; puis en sessions ultérieures les chantiers lourds reportés (`R-TECH-04` WASM, `F-CTX-01..03`, `F-ANA-01..02`, `F-EXT-01..02`, `F-UX-01/03/04`, `F-AUTO-04`).
--[Antigravity-app, Gemini 4 Argon, high]
+- ✅ Done: **2026-11-22** : Remplacement du logo de l'extension par le glyphe **N3** (*3-Fold Orbit Knot*) détouré sur fond transparent avec dégradé cyan → bleu (`#38BDF8` → `#3B82F6` → `#2563EB`) compatible barres d'outils claires et sombres (`8196428` : `icon.svg`, `icon.png`, `icons/icon16.png`, `icons/icon48.png`, `icons/icon128.png`). Validation `bash .githooks/pre-push` verte (`117/117` tests + Quality Gate `full` 7/7).
+- ⏳ Pending: Confirmation utilisateur pour `git push origin master` (`8196428`..HEAD en avance sur `origin/master` `3e80095`) et archivage de `plan_swarm_core_sprint.md` ; puis chantiers lourds reportés (`R-TECH-04` WASM, `F-CTX-01..03`, `F-ANA-01..02`, `F-EXT-01..02`, `F-UX-01/03/04`, `F-AUTO-04`).
+-[Antigravity-app, Gemini 4 Neon, medium]
 
 ## 👉 Next Session Direction
-Pousser les commits du sprint cœur (`aaea7b3`..HEAD) sur `origin/master` après validation humaine, archiver `plan_swarm_core_sprint.md` sur confirmation de l'utilisateur, puis planifier le prochain chantier de `Docs/task_tracking.md` (ex. `F-ANA-01` Learning Dashboard ou `F-EXT-01` Platform Adapters).
--[Antigravity-app, Gemini 4 Argon, high]
+Pousser `8196428`..HEAD sur `origin/master` après validation humaine, archiver `plan_swarm_core_sprint.md` sur confirmation de l'utilisateur, puis planifier le prochain chantier de `Docs/task_tracking.md` (ex. `F-ANA-01` Learning Dashboard ou `F-EXT-01` Platform Adapters).
+-[Antigravity-app, Gemini 4 Neon, medium]
 
 ## 🧠 Decisions Made
 - **2026-11-22** : [Bascule dynamique de modèle Swarm vers `gemini-4-argon-high` sur seuil quota `< 10%` et exécution atomique 6 lots]
