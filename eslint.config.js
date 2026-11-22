@@ -30,6 +30,10 @@ export default [
         TextDecoder: "readonly",
         Promise: "readonly",
         AbortController: "readonly",
+        AbortSignal: "readonly",
+        DOMParser: "readonly",
+        TextEncoder: "readonly",
+        queueMicrotask: "readonly",
         fetch: "readonly",
         Object: "readonly",
         Math: "readonly",
@@ -59,6 +63,18 @@ export default [
     },
     rules: {
       "no-undef": "error"
+    }
+  },
+  {
+    files: ["tests/**/*.test.js"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        Buffer: "readonly",
+        TextEncoder: "readonly",
+        queueMicrotask: "readonly",
+        AbortSignal: "readonly"
+      }
     }
   }
 ];

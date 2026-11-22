@@ -3,9 +3,8 @@
 ## Pending Test Scenarios
 
 ### Static Checks
-- [ ] Scenario: ESLint (non installé localement, pas de `package.json`)
-  - Verification: installer ESLint explicitement avec accord mainteneur avant de lancer `npx eslint .` (ne jamais lancer `npx` sans `--no`/installation préalable : prompt npm interactif bloquant)
--[Antigravity-app, Gemini 4 Argon, high]
+- [x] Scenario: ESLint (`eslint .`) — Exécuté le 2026-11-22 avec `eslint` v10.15.0 installé globalement (`/home/omni/.nvm/versions/node/v26.2.0/bin/eslint`) après mise à jour autorisée de `eslint.config.js` (globaux Web `DOMParser`, `AbortSignal`, `TextEncoder`, `queueMicrotask` + override `tests/**/*.test.js` pour `process`/`Buffer`) -> `0` erreur, `0` warning (contrôle négatif : `process` dans `background.js` rejeté `no-undef`).
+-[Antigravity-app, unknown, unknown]
 
 ### Live Browser Runtime (E2E Chromium)
 - [x] Scenario: Chargement de l'extension non empaquetée dans Brave/Chromium (`--load-extension`) et test E2E complet (6 formats, Shadow DOM, `page-bridge.js` `world: 'MAIN'`, Mode Auto/Auto-Submit, résilience LLM, Anti-SSRF, `fcc-server` live sur `mock_quiz.html` et sites publics) — Exécuté le 2026-11-22 (25/25 vérifications déterministes PASS, 9 bugs réels consignés `BUG-01`..`BUG-09` dans `.GCC/branches/test.md`).

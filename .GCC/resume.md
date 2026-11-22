@@ -1,32 +1,29 @@
 # Session Handoff
 
 ## 🎯 Functional Outcome & Task Reality
-- **Requested Task**: Corriger l'ensemble des 9 bugs runtime (`BUG-01`..`BUG-09`) découverts lors de l'audit E2E Brave 158, revalider de bout en bout (tests unitaires, E2E déterministe Brave 158, E2E live `fcc-server` avec `antigravity/gemini-4-hydrogen-sonar` et inspection visuelle des captures), valider le Quality Gate + revue indépendante `antibug`, synchroniser `.GCC/` et committer localement.
+- **Requested Task**: Ré-exécuter la suite E2E live sous Brave sur `HEAD` (`0df6c06`), installer ESLint globalement, corriger les erreurs `no-undef` via `eslint.config.js` (après accord explicite du mainteneur), revalider les gates et synchroniser `.GCC/`.
 - **Functional Status**: SUCCESS
 - **Behavioral Proof**:
-  - **Tests unitaires & invariants (`117/117` PASS, 0 fail)** exécutés séquentiellement (`for t in tests/*.test.js; do node --test "$t" || exit 1; done`) : `tests/agent-intel.test.js` (11), `tests/dom-extractor.test.js` (19), `tests/e2e-regressions.test.js` (16 — couvrant `BUG-01`..`BUG-09`, `BUG-06b`, `BUG-07b`, `ANTIBUG-01`..`04`, `ANTIBUG-P2`, `ANTIBUG-P3`), `tests/invariants.test.js` (10), `tests/nlp-cleaner.test.js` (24), `tests/providers-models.test.js` (7), `tests/providers-retry.test.js` (14), `tests/security-stealth.test.js` (9), `tests/ui-integration.test.js` (7).
-  - **E2E Déterministe Brave 158 MV3 (`run_e2e_deterministic.py`, post-derniers correctifs)** : `{"total": 30, "passed": 30, "failed": 0, "bugsObservedCount": 0, "pageErrorsCount": 0}`.
-  - **E2E Live Brave 158 + `fcc-server` (`run_e2e_live.py`, `antigravity/gemini-4-hydrogen-sonar`)** : `mock_quiz.html` (PASS 2/2, `"Paris"`, bouton flottant `"Selenium"`), `Examveda` (PASS 10/10, badges 85%..100%), `W3docs` (`"HTML stands for"` extrait, `"Hyper Text Markup Language"` à 100%, 1 badge, 0 signature statique ; code de sortie 1 du script dû uniquement à `len("HTML stands for") == 15` vs `> 15` dans le script E2E et à une `pageerror` du script tiers du site face à `HeadlessChrome/158.0.0.0`), `W3Schools HTML` & `JS` (PASS 1/1, `#qtext` présent, 100%), `ProviderAnalytics` live `5/5` (`avgLatencyMs: 4849`).
-  - **Audit indépendant `antibug` (4 passes à contexte frais)** : Passes 1–3 ont identifié et fait corriger 11 défauts (5 HIGH, 6 MEDIUM) avec tests associés ; Passe 4 sur le diff final indexé (`Model: "flash"` autorisé par l'utilisateur après 429 sur modèle hérité, ID `12eeb67f`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+  - **E2E Live Brave 158 + `fcc-server` (`run_e2e_live.py` sur `0df6c06`, exit `0`)** : `5/5` cibles PASS (`mock_quiz.html`, `Examveda HTML MCQ` 10/10, `W3docs HTML Basic Quiz` `'How you can open the link in a new window?'` 100%, `W3Schools HTML Quiz` 100%, `W3Schools JS Quiz` 100%, `providerRequests: 5`, `pageErrorsCount: 0`, `thirdPartyPageErrorsCount: 1` script tiers W3docs sur `HeadlessChrome`). Captures visuellement vérifiées.
+  - **E2E Déterministe Brave 158 (`run_e2e_deterministic.py`)** : `30/30` PASS (`bugsObservedCount: 0`, `pageErrorsCount: 0`).
+  - **Tests unitaires & invariants (`node:test`)** : `117/117` PASS sur les 9 fichiers (`0` échec).
+  - **ESLint (`eslint v10.15.0` global -> `eslint .`)** : exit `0`, `0` erreur, `0` warning ; contrôle négatif `process` dans `background.js` rejeté `no-undef`.
 
 ## ⚡ Technical Diffs / Atomic Modifications
-- **File**: `settings.html`, `settings.js` — Suppression de `#card-fireworks` (`BUG-01`) et gardes défensifs dans `testProvider()` (`Object.prototype.hasOwnProperty.call(PROVIDERS, providerKey)` + restauration du bouton en `finally`).
-- **File**: `background-agent.js` — Sérialisation des options `select_matching`, `drag_drop`, `fill_blank` via `_getNormalizedQuestionMeta` & `_formatQuestionForPrompt` (`BUG-02`), télémétrie `ProviderAnalytics` + propagation `apiErr.status` (dont `429`) dans `_callLLMWithTools` et `flush()` en `finally` (`BUG-05`), matching multi-passes strict->alphanum->word-boundary avec séparation flèche avant `:` (`_matchOptionIndexByText`), parsing `_parseAIResponse` (XML `checkbox`/`drag_drop`/`text`, niveaux 2/3 sans capture naïve de chiffres internes ni fraction `1/2`), `_answersAgree` comparant les appariements `drag_drop`, et traduction position/index global dans `_mapToolAnswersToParsedAnswers`.
-- **File**: `highlight-manager.js`, `content.css`, `manifest.json` — Suppression des classes statiques (`content.css` commenté, retrait du manifeste MV3) au profit de classes aléatoires dérivées de `_styleTagId` (`_badgeClass`, `_floatClass`, `_floatDiscreetClass`, `_floatVisibleClass`, `_floatGlowClass`) (`BUG-03`) ; correction de la boucle 60fps `IntersectionObserver` (`_renderedQuestions`, `_intersectingTargets`, `observeMutationTargets` / `observeIntersectionTargets`), `isOwnUiNode` / `isOwnUiMutation` robuste post-nettoyage, Auto-Heal parent `childList` avec compteur anti-course `_healGeneration`, nettoyage des anciens surlignages lors de pagination SPA sans correspondance, et fusion `append` connectée (`BUG-07`, `BUG-07b`, `ANTIBUG-03`).
-- **File**: `content.js`, `popup.js` — Câblage opt-in et sérialisé du pont `MAIN` `page-bridge.js` (`syncPassiveNetworkInterceptor`, `BUG-04`), filtrage `isOwnUiMutation` et `contentHash` tête+queue dans Mode Auto, contrat `{ success, data }` pour `getSchemaStatus`/`discoverSchema` (`BUG-06`), et garde `err.isMissingReceiver` dans `popup.js:analyzeQuiz` pour ne jamais ré-injecter les 6 scripts sur erreur LLM/métier (`BUG-06b`).
-- **File**: `schema-detector.js`, `dom-extractor.js` — `IGNORE_TAGS` élargi aux balises SVG/template insensibles à la casse, filtrage chrome/hidden, `findSkeletonRoot` préférant les clusters de choix/repères sans détournement par un `<select>` de barre d'outils et préservant les consignes `<h2>` sœurs, ajout de `#quizmain`/`#quizcontainer`/`#quizform`/`#qtext`/`.qtext` (`BUG-08`), et `isGenericSectionLabel` + `findPrecedingQuestionText` pour récupérer la vraie consigne sur W3docs (`BUG-09`).
-- **File**: `tests/e2e-regressions.test.js` — 16 tests de régression dédiés couvrant l'ensemble des correctifs.
+- **File**: `0df6c06` (déjà committé sur `master`) — correctifs `BUG-01`..`BUG-09` + constats `antibug` passes 1–4.
+- **File**: `eslint.config.js` (autorisé `ALLOW_CONFIG_EDIT=1`) — ajout des globaux Web (`AbortSignal`, `DOMParser`, `TextEncoder`, `queueMicrotask`) et d'un bloc dédié `files: ["tests/**/*.test.js"]` (`process`, `Buffer`, `TextEncoder`, `queueMicrotask`, `AbortSignal`), gardant `process`/`Buffer` strictement interdits dans les scripts livrés.
+- **File**: `.GCC/branches/test.md`, `.GCC/branches/test_todo.md`, `.GCC/resume.md` — journalisation de la passe E2E live et de la vérification `eslint .`.
 
 ## 🛠️ Static Codebase Health
-- **Verification Command Run**: `for f in *.js tests/*.js; do node --check "$f" || exit 1; done && QUALITY_GATE_SCOPE=full bash .githooks/pre-commit && bash .githooks/pre-push`
-- **Linter/Compiler Status**: `[Quality Gate] ✅ Toutes les vérifications sont passées (périmètre : full).` (syntaxes JS/JSON, `gitleaks`, bannissement d'inhibitions, Semgrep hors-ligne, invariants OK) ; vérifier le statut final `pre-push` ci-dessous après commit.
+- **Verification Command Run**: `eslint . && ALLOW_CONFIG_EDIT=1 QUALITY_GATE_SCOPE=full bash .githooks/pre-commit && bash .githooks/pre-push`
+- **Linter/Compiler Status**: ESLint `0` erreur / `0` warning ; `pre-commit` 7/7 étapes OK ; `pre-push` OK (`117/117` + Quality Gate `full`).
 
 ## 🚧 Unfinished Work & Technical Failures
-- **Blocker / Failure Explanation**: Aucun blocage applicatif. `git push` vers `origin/master` reste en attente de confirmation écrite explicite de l'utilisateur (`.gouvernance/accompanied-agent.md`). Le script live `run_e2e_live.py` (exécuté avant les derniers ajustements unitaires des passes `antibug` 1–3) avait retourné le code de sortie `1` uniquement à cause du seuil `len(first_stem) > 15` contre `"HTML stands for"` (15 car.) et d'une `pageerror` du wrapper public `w3docs.com` sur `HeadlessChrome`.
+- **Blocker / Failure Explanation**: Aucun blocage technique. `git push origin master` reste en attente de confirmation explicite de l'utilisateur (`.gouvernance/accompanied-agent.md`).
 
 ## 👉 Handover Directives for the Next Agent
 1. **Target File**: `Docs/task_tracking.md` et `.GCC/main.md`
-2. **Immediate Action**: Si l'utilisateur approuve, exécuter `git push origin master` (`pre-push` vérifiera `HEAD`) puis poursuivre les chantiers restants de `Docs/task_tracking.md`.
+2. **Immediate Action**: Si l'utilisateur approuve, exécuter `git push origin master`, puis poursuivre le backlog restant.
 3. **Verification Command**: `bash .githooks/pre-push`
 
 -[Antigravity-app, unknown, unknown]

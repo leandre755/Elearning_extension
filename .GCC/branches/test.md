@@ -161,3 +161,22 @@
     - Passe 3 (`7ba288dc`, modèle hérité) : 5 constats (2 HIGH, 3 MEDIUM) corrigés avec tests (`ANTIBUG-P3`).
     - Passe 4 (`0a72ddce` bloqué en 429 sur modèle hérité ; relancé sur `Model: "flash"` avec accord utilisateur, ID `12eeb67f`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
 -[Antigravity-app, unknown, unknown]
+
+### Run: Re-exécution E2E Live sur `HEAD` (`0df6c06`) + Vérification ESLint globale (`eslint .`)
+- **Date**: 2026-11-22
+- **Target**: `HEAD` (`0df6c06`) dans Brave 158 + `fcc-server` (`antigravity/gemini-4-hydrogen-sonar`), et `eslint .` (ESLint `v10.15.0` installé globalement) après mise à jour autorisée de `eslint.config.js`
+- **Status**: PASS
+- **Output / Evidence**:
+  - **E2E Live Brave 158 + `fcc-server` (`run_e2e_live.py`, code de sortie `0`)** :
+    ```text
+    === LIVE SUMMARY === {"liveModel": "antigravity/gemini-4-hydrogen-sonar", "mockQuizStatus": "PASS", "publicSites": [{"label": "Examveda HTML MCQ", "status": "PASS", "phase1ExtractedCount": 10}, {"label": "W3docs HTML Basic Quiz", "status": "PASS", "phase1ExtractedCount": 1}, {"label": "W3Schools HTML Quiz", "status": "PASS", "phase1ExtractedCount": 1}, {"label": "W3Schools JS Quiz", "status": "PASS", "phase1ExtractedCount": 1}], "providerRequests": 5, "pageErrorsCount": 0, "thirdPartyPageErrorsCount": 1}
+    ```
+    - `Examveda HTML MCQ` : PASS (`phase1=10`, `solve=10`, badges `85%..100%`, `staticSigs=0`).
+    - `W3docs HTML Basic Quiz` : PASS (`phase1=1`, `stem='How you can open the link in a new window?'`, réponse `target="_blank"` `100%`, `highlighted=1`, `badges=1`, `staticSigs=0`) ; l'unique `thirdPartyPageErrors` provient du script tiers hôte rejetant `HeadlessChrome/158.0.0.0`.
+    - `W3Schools HTML Quiz` (`'What does HTML stand for?'`, `100%`) & `W3Schools JS Quiz` (`'Inside which HTML element do we put the JavaScript?'`) : PASS (`1/1`, `#qtext` dans le squelette DOM, `0` signature statique).
+    - `ProviderAnalytics` live : `requests: 5, successes: 5, failures: 0, rateLimits: 0, avgLatencyMs: 4871`.
+  - **ESLint (`eslint .`, code de sortie `0`)** :
+    - 10/10 fichiers modifiés sur `0df6c06` avaient déjà 0 erreur ; 41 erreurs préexistantes `no-undef` relevées sur globaux manquants (`DOMParser` dans `nlp-cleaner.js`, `AbortSignal` dans `providers.js` + `providers-retry.test.js`, `process`/`Buffer`/`TextEncoder`/`queueMicrotask` dans `tests/*.test.js`).
+    - Mise à jour de `eslint.config.js` (autorisée par le mainteneur via `ALLOW_CONFIG_EDIT=1`) : ajout de `AbortSignal`, `DOMParser`, `TextEncoder`, `queueMicrotask` aux globaux runtime + bloc ciblé `files: ["tests/**/*.test.js"]` pour `process`/`Buffer`.
+    - Résultat après correction : `eslint .` -> `0` erreur, `0` warning ; contrôle négatif `echo "process.exit(0)" | eslint --stdin --stdin-filename background.js` -> rejeté `'process' is not defined (no-undef)`.
+-[Antigravity-app, unknown, unknown]
