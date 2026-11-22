@@ -180,3 +180,14 @@
     - Mise à jour de `eslint.config.js` (autorisée par le mainteneur via `ALLOW_CONFIG_EDIT=1`) : ajout de `AbortSignal`, `DOMParser`, `TextEncoder`, `queueMicrotask` aux globaux runtime + bloc ciblé `files: ["tests/**/*.test.js"]` pour `process`/`Buffer`.
     - Résultat après correction : `eslint .` -> `0` erreur, `0` warning ; contrôle négatif `echo "process.exit(0)" | eslint --stdin --stdin-filename background.js` -> rejeté `'process' is not defined (no-undef)`.
 -[Antigravity-app, unknown, unknown]
+
+### Run: Onglet dédié « Fournisseurs » dans `settings.html` (4 onglets) + Vérification Playwright Chrome & ANTIBUG
+- **Date**: 2026-11-22
+- **Target**: `settings.html` (commit `67deb62`)
+- **Status**: PASS
+- **Output / Evidence**:
+  - `node --test --test-concurrency=1 tests/*.test.js` → `tests 117, pass 117, fail 0`
+  - `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit` → `7/7 ✅` (gitleaks, syntax, Semgrep, invariants)
+  - Vérification navigateur réel (Playwright + `/bin/google-chrome`, viewport `1024x900`, thèmes clair et sombre) : 4 onglets (`01 Général`, `02 Fournisseurs`, `03 Avancé`, `04 Expert`), `#tab-essential` = `['Discrétion', 'Notes de cours']`, `#tab-providers` = `['Clés API', 'Ordre des fournisseurs']` (`5` cartes clés + `5` lignes `#priorityList`), `#tab-advanced` commence par `Recherche web` (sans doublon d'ordre), `#tab-expert` inchangé, `TABS_OVERFLOW_1024: False`.
+  - Revue indépendante `antibug-reviewer` (`c6027b5a`) sur le diff stagé : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+-[Antigravity-app, Gemini 4 Neon, medium]
