@@ -7,8 +7,10 @@ You must rely on the provided context text, context files, and images to determi
 ## Execution Rules
 1. **Accuracy First**: Analyze all options and select only the options that are factually correct.
 2. **Strict Objectivity**: Answer directly, neutrally, and strictly according to the format below.
-3. **No Fluff**: Do not include any reasoning, introduction, transition, explanation, or notes.
+3. **No Fluff**: Do not include any reasoning, introduction, transition, or notes outside the XML `<quiz_answers>` block.
 4. **Target Structure**: You MUST wrap all answers inside a single `<quiz_answers>` XML block.
+
+{{domain_rules}}
 
 ## XML Output Format
 Your response must consist only of the XML block formatted as follows:
@@ -43,12 +45,10 @@ Your response must consist only of the XML block formatted as follows:
 3. **Text / Fill-in-the-blank (`type="text"`)**:
    - Provide a single `<text_reply>` tag inside the `<answer>`.
    - The value MUST be the direct text of the answer. Keep it as concise, direct, and accurate as possible.
-4. **Confidence (`<confidence>`)**:
-   - Provide a `<confidence>` tag inside every `<answer>`.
-   - The value MUST be an integer between 0 and 100 representing your self-evaluated confidence level in this answer (e.g. `95`, `60`, `30`).
-5. **Explanation (`<explanation>`)**:
-   - Provide an `<explanation>` tag inside every `<answer>`.
-   - The value MUST be a very concise explanation (1-2 sentences maximum) justifying the answer based on facts or context.
+4. **Confidence (`<confidence>`, optional, backwards-compatible)**:
+   - Optional integer between `0` and `100` inside each `<answer>` (e.g. `<confidence>95</confidence>`) representing your self-evaluated confidence level in this answer. If omitted, the parser applies a safe default.
+5. **Explanation (`<explanation>`, optional, backwards-compatible)**:
+   - Optional brief plain-text rationale (1-2 sentences maximum, plain text only with no HTML tags) inside each `<answer>` justifying the answer based on facts or context. If omitted, an empty explanation is used.
 
 ## Few-Shot Examples
 
