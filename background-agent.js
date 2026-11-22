@@ -290,26 +290,128 @@ const BackgroundAgent = (() => {
     return BLOCKED_PROVIDER_KEYS.has(norm) ? null : norm;
   }
 
+  function _getProviderDef(providerKey) {
+    const normKey = _normalizeProviderKey(providerKey);
+    if (!normKey || typeof QuizProviders === 'undefined' || !QuizProviders || !QuizProviders.PROVIDERS) {
+      return null;
+    }
+    return Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, normKey)
+      ? QuizProviders.PROVIDERS[normKey]
+      : null;
+  }
+
+  function _getProviderType(providerKey) {
+    const normKey = _normalizeProviderKey(providerKey) || '';
+    const provider = _getProviderDef(normKey);
+    if (provider && typeof provider.type === 'string' && provider.type) {
+      return provider.type;
+    }
+    if (normKey === 'gemini') return 'gemini';
+    if (normKey === 'claude') return 'claude';
+    return 'openai-compatible';
+  }
+
+  function _buildEndpointUrl(baseUrl, suffix) {
+    const cat = typeof globalThis !== 'undefined' ? globalThis.ProviderCatalog : null;
+    if (cat && typeof cat.buildEndpointUrl === 'function') {
+      return cat.buildEndpointUrl(baseUrl, suffix);
+    }
+    const cleanBase = typeof baseUrl === 'string' ? baseUrl.trim().replace(/\/+$/, '') : '';
+    const cleanSuffix = typeof suffix === 'string' ? suffix.trim() : '';
+    if (!cleanBase) return '';
+    if (!cleanSuffix) return cleanBase;
+    return `${cleanBase}${cleanSuffix.startsWith('/') ? cleanSuffix : `/${cleanSuffix}`}`;
+  }
+
+  function _isProviderConfigured(providerKey, config) {
+    const normKey = _normalizeProviderKey(providerKey);
+    const provider = _getProviderDef(normKey);
+    if (!normKey || !provider || !config || typeof config !== 'object') {
+      return false;
+    }
+    if (typeof QuizProviders !== 'undefined' && QuizProviders && typeof QuizProviders.isProviderConfigured === 'function') {
+      return QuizProviders.isProviderConfigured(normKey, config);
+    }
+    const pConfigs = (config.providerConfigs && typeof config.providerConfigs === 'object') ? config.providerConfigs : null;
+    const pCfg = (pConfigs && Object.prototype.hasOwnProperty.call(pConfigs, normKey) && pConfigs[normKey] && typeof pConfigs[normKey] === 'object')
+      ? pConfigs[normKey]
+      : null;
+    if (provider.local === true) {
+      return Boolean(pCfg && pCfg.enabled === true);
+    }
+    const field = provider.apiKeyField;
+    const hasKey = Boolean(field && Object.prototype.hasOwnProperty.call(config, field) && typeof config[field] === 'string' && config[field].trim().length > 0);
+    if (!hasKey) return false;
+    if (provider.requiresAccountId && (!pCfg || typeof pCfg.accountId !== 'string' || !pCfg.accountId.trim())) return false;
+    if (provider.requiresBaseUrl && (!pCfg || typeof pCfg.baseUrl !== 'string' || !pCfg.baseUrl.trim())) return false;
+    return true;
+  }
+
+  function _resolveRuntimeConfig(providerKey, config) {
+    const normKey = _normalizeProviderKey(providerKey);
+    const provider = _getProviderDef(normKey);
+    if (typeof QuizProviders !== 'undefined' && QuizProviders && typeof QuizProviders.resolveProviderRuntimeConfig === 'function') {
+      return QuizProviders.resolveProviderRuntimeConfig(normKey, config);
+    }
+    const pConfigs = (config && config.providerConfigs && typeof config.providerConfigs === 'object') ? config.providerConfigs : null;
+    const providerConfig = (normKey && pConfigs && Object.prototype.hasOwnProperty.call(pConfigs, normKey) && pConfigs[normKey] && typeof pConfigs[normKey] === 'object')
+      ? { ...pConfigs[normKey] }
+      : {};
+    const field = provider && provider.apiKeyField;
+    const rawKey = (config && field && Object.prototype.hasOwnProperty.call(config, field) && typeof config[field] === 'string')
+      ? config[field].trim()
+      : '';
+    return {
+      apiKey: rawKey || (provider && provider.local ? (provider.staticApiKey || 'local') : ''),
+      providerConfig,
+      baseUrl: provider ? (provider.baseUrl || '') : ''
+    };
+  }
+
+  function _resolveEndpointBaseUrl(providerKey, provider, providerConfig, model) {
+    const normKey = _normalizeProviderKey(providerKey) || '';
+    if (typeof QuizProviders !== 'undefined' && QuizProviders && typeof QuizProviders.resolveProviderBaseUrl === 'function') {
+      return QuizProviders.resolveProviderBaseUrl(normKey, providerConfig, model);
+    }
+    if (normKey === 'mistral' && typeof model === 'string' && model.toLowerCase().includes('codestral')) {
+      return 'https://codestral.mistral.ai/v1';
+    }
+    const customBase = (providerConfig && typeof providerConfig.baseUrl === 'string') ? providerConfig.baseUrl.trim() : '';
+    return customBase || (provider && provider.baseUrl) || '';
+  }
+
   /**
-   * Liste strictement les providers possédant une clé API non vide.
+   * Liste strictement les providers configurés dans l'ordre de priorité.
    */
   function _getStrictlyConfiguredProviders(mergedConfig, order) {
     if (typeof QuizProviders === 'undefined' || !QuizProviders || !QuizProviders.PROVIDERS) {
       return [];
     }
-    const priority = Array.isArray(order) ? order
-      : (mergedConfig && Array.isArray(mergedConfig.providerOrder) ? mergedConfig.providerOrder : (QuizProviders.DEFAULT_PRIORITY || []));
+    const defaultOrder = QuizProviders.DEFAULT_PRIORITY || [];
+    const fallbackAllOrder = [
+      ...defaultOrder,
+      ...Object.keys(QuizProviders.PROVIDERS).filter(k => !defaultOrder.includes(k))
+    ];
+    const priority = (Array.isArray(order) && order.length > 0)
+      ? order
+      : ((mergedConfig && Array.isArray(mergedConfig.providerOrder) && mergedConfig.providerOrder.length > 0)
+          ? mergedConfig.providerOrder
+          : fallbackAllOrder);
     const configured = [];
     for (const rawKey of priority) {
       const pKey = _normalizeProviderKey(rawKey);
       if (!pKey || !Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, pKey)) {
         continue;
       }
-      const provider = QuizProviders.PROVIDERS[pKey];
-      const field = provider && provider.apiKeyField;
-      if (provider && field && mergedConfig && Object.prototype.hasOwnProperty.call(mergedConfig, field) &&
-          typeof mergedConfig[field] === 'string' && mergedConfig[field].trim().length > 0 && !configured.includes(pKey)) {
+      if (_isProviderConfigured(pKey, mergedConfig) && !configured.includes(pKey)) {
         configured.push(pKey);
+      }
+    }
+    if (configured.length === 0) {
+      for (const pKey of fallbackAllOrder) {
+        if (_isProviderConfigured(pKey, mergedConfig) && !configured.includes(pKey)) {
+          configured.push(pKey);
+        }
       }
     }
     return configured;
@@ -670,14 +772,7 @@ const BackgroundAgent = (() => {
       let canUseExplicitSecondary = hasLLMOverride;
       if (!canUseExplicitSecondary && hasProvidersRegistry &&
           Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, explicitSecondary)) {
-        const secDef = QuizProviders.PROVIDERS[explicitSecondary];
-        const secField = secDef && secDef.apiKeyField;
-        canUseExplicitSecondary = Boolean(
-          secField &&
-          Object.prototype.hasOwnProperty.call(mergedConfig, secField) &&
-          typeof mergedConfig[secField] === 'string' &&
-          mergedConfig[secField].trim().length > 0
-        );
+        canUseExplicitSecondary = _isProviderConfigured(explicitSecondary, mergedConfig);
       }
       if (canUseExplicitSecondary) {
         secondaryProviders = [explicitSecondary, ...secondaryProviders];
@@ -973,19 +1068,19 @@ const BackgroundAgent = (() => {
       ? _normalizeProviderKey(settings.selectedProvider)
       : null;
 
-    if (providerKey) {
-      const provider = QuizProviders.PROVIDERS[providerKey];
-      const apiKey = provider ? mergedConfig[provider.apiKeyField] : null;
-      if (!apiKey || apiKey.length === 0) {
-        providerKey = null;
-      }
+    if (providerKey && !_isProviderConfigured(providerKey, mergedConfig)) {
+      providerKey = null;
     }
 
     if (!providerKey) {
-      providerKey = QuizProviders.getFirstConfiguredProvider(
-        mergedConfig,
-        syncConfig.providerOrder || QuizProviders.DEFAULT_PRIORITY
-      );
+      if (typeof QuizProviders.getFirstConfiguredProvider === 'function') {
+        providerKey = QuizProviders.getFirstConfiguredProvider(
+          mergedConfig,
+          syncConfig.providerOrder || QuizProviders.DEFAULT_PRIORITY
+        );
+      } else {
+        providerKey = _getAllConfiguredProviders(task.config, syncConfig.providerOrder)[0] || null;
+      }
     }
 
     if (!providerKey) {
@@ -1124,12 +1219,20 @@ const BackgroundAgent = (() => {
 
       const settings = task.config.settings || {};
       const effectiveSyncConfig = { ...(task.config.syncConfig || {}) };
+      const effectiveApiKeys = { ...(task.config.apiKeys || {}) };
+      const isServiceWorkerCtx = typeof ServiceWorkerGlobalScope !== 'undefined' &&
+        self instanceof ServiceWorkerGlobalScope;
       const intelKeys = ['domainPreset', 'customDomainRules', 'crossValidationEnabled', 'crossValidationThreshold'];
-      if (intelKeys.some(k => effectiveSyncConfig[k] === undefined && settings[k] === undefined)) {
+      if (isServiceWorkerCtx || intelKeys.some(k => effectiveSyncConfig[k] === undefined && settings[k] === undefined)) {
+        if (isServiceWorkerCtx) {
+          delete effectiveSyncConfig.providerConfigs;
+          delete effectiveApiKeys.providerConfigs;
+        }
         if (typeof chrome !== 'undefined' && chrome.storage) {
           try {
+            const localReadKeys = isServiceWorkerCtx ? [...intelKeys, 'providerConfigs'] : intelKeys;
             const localData = (chrome.storage.local && typeof chrome.storage.local.get === 'function')
-              ? await chrome.storage.local.get(intelKeys)
+              ? await chrome.storage.local.get(localReadKeys)
               : {};
             const syncData = (chrome.storage.sync && typeof chrome.storage.sync.get === 'function')
               ? await chrome.storage.sync.get(intelKeys)
@@ -1140,12 +1243,19 @@ const BackgroundAgent = (() => {
                 effectiveSyncConfig[k] = mergedStored[k];
               }
             }
+            if (isServiceWorkerCtx) {
+              const trustedCfgs = (localData && localData.providerConfigs && typeof localData.providerConfigs === 'object')
+                ? localData.providerConfigs
+                : {};
+              effectiveSyncConfig.providerConfigs = trustedCfgs;
+              effectiveApiKeys.providerConfigs = trustedCfgs;
+            }
           } catch (_) {
             // Ignorer les erreurs storage en environnement de test
           }
         }
       }
-      const effectiveConfig = { ...task.config, syncConfig: effectiveSyncConfig };
+      const effectiveConfig = { ...task.config, syncConfig: effectiveSyncConfig, apiKeys: effectiveApiKeys };
       const effectiveTask = { ...task, config: effectiveConfig };
       const crossValidationEnabled =
         settings.crossValidationEnabled === true ||
@@ -1350,7 +1460,7 @@ const BackgroundAgent = (() => {
   }
 
   /**
-   * Helper pour lister tous les providers configurés avec une clé API dans l'ordre de priorité.
+   * Helper pour lister tous les providers configurés dans l'ordre de priorité.
    */
   function _getAllConfiguredProviders(config, order) {
     const syncConfig = config.syncConfig || {};
@@ -1363,11 +1473,15 @@ const BackgroundAgent = (() => {
       if (!pKey || !Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, pKey)) {
         continue;
       }
-      const provider = QuizProviders.PROVIDERS[pKey];
-      if (provider && Object.prototype.hasOwnProperty.call(mergedConfig, provider.apiKeyField) &&
-          typeof mergedConfig[provider.apiKeyField] === 'string' && mergedConfig[provider.apiKeyField].trim().length > 0 &&
-          !configured.includes(pKey)) {
+      if (_isProviderConfigured(pKey, mergedConfig) && !configured.includes(pKey)) {
         configured.push(pKey);
+      }
+    }
+    if (configured.length === 0) {
+      for (const pKey of Object.keys(QuizProviders.PROVIDERS)) {
+        if (_isProviderConfigured(pKey, mergedConfig) && !configured.includes(pKey)) {
+          configured.push(pKey);
+        }
       }
     }
     return configured.length > 0 ? configured : priority;
@@ -1383,30 +1497,28 @@ const BackgroundAgent = (() => {
 
     const settings = config.settings || {};
     const apiKeys = config.apiKeys || {};
+    const mergedConfig = { ...syncConfig, ...apiKeys };
 
     let providerKey = _normalizeProviderKey(settings.selectedProvider);
 
-    // Si un provider spécifique est sélectionné, on vérifie s'il dispose d'une clé API valide
+    // Si un provider spécifique est sélectionné, on vérifie qu'il est correctement configuré
     if (providerKey) {
-      const provider = Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, providerKey)
-        ? QuizProviders.PROVIDERS[providerKey]
-        : null;
-      const apiKey = (provider && Object.prototype.hasOwnProperty.call(apiKeys, provider.apiKeyField))
-        ? apiKeys[provider.apiKeyField]
-        : null;
-      if (!apiKey || apiKey.length === 0) {
-        _log(journal, 'plan_fallback', `Le provider sélectionné "${providerKey}" n'a pas de clé API configurée. Recherche d'un fallback intelligent...`);
+      if (!_isProviderConfigured(providerKey, mergedConfig)) {
+        _log(journal, 'plan_fallback', `Le provider sélectionné "${providerKey}" n'est pas configuré. Recherche d'un fallback intelligent...`);
         providerKey = null;
       }
     }
 
-    // Routage intelligent de secours : recherche du premier provider configuré avec clé
+    // Routage intelligent de secours : recherche du premier provider configuré
     if (!providerKey) {
-      const mergedConfig = { ...syncConfig, ...apiKeys };
-      providerKey = QuizProviders.getFirstConfiguredProvider(
-        mergedConfig,
-        syncConfig.providerOrder || QuizProviders.DEFAULT_PRIORITY
-      );
+      if (typeof QuizProviders.getFirstConfiguredProvider === 'function') {
+        providerKey = QuizProviders.getFirstConfiguredProvider(
+          mergedConfig,
+          syncConfig.providerOrder || QuizProviders.DEFAULT_PRIORITY
+        );
+      } else {
+        providerKey = _getAllConfiguredProviders(config, syncConfig.providerOrder)[0];
+      }
     }
 
     // Base context text + files
@@ -1556,11 +1668,13 @@ const BackgroundAgent = (() => {
 
     // Concept AION 2.0 (Deferred Loading/Bypass) : Si SerpAPI est désactivé, on élimine 
     // l'overhead du tool-calling pour maximiser la vitesse de génération directe.
+    const mergedRuntimeConfig = { ...(syncConfig || {}), ...(config.apiKeys || {}) };
+
     if (!searchEnabled) {
       _log(journal, 'react_direct_bypass', 'SerpAPI désactivé, basculement en mode direct ultra-rapide.');
       const response = await _callLLMWithTools(
         providerKey,
-        config.apiKeys || {},
+        mergedRuntimeConfig,
         modelId,
         messages,
         allImages,
@@ -1584,7 +1698,7 @@ const BackgroundAgent = (() => {
       // 1. Appeler le LLM avec l'historique des messages et les outils
       const response = await _callLLMWithTools(
         providerKey,
-        config.apiKeys || {},
+        mergedRuntimeConfig,
         modelId,
         messages,
         allImages,
@@ -1704,19 +1818,19 @@ const BackgroundAgent = (() => {
   // ────────────────────────────────────────────────
 
   function _initHistory(providerKey, systemPrompt, userPrompt) {
-    const normalizedKey = String(providerKey || '').trim().toLowerCase();
-    if (normalizedKey === 'gemini') {
+    const providerType = _getProviderType(providerKey);
+    if (providerType === 'gemini') {
       return {
         systemInstruction: systemPrompt,
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }]
       };
-    } else if (normalizedKey === 'claude') {
+    } else if (providerType === 'claude') {
       return {
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }]
       };
     } else {
-      // OpenAI, Groq, Mistral, NVIDIA
+      // OpenAI-compatible
       return {
         system: systemPrompt,
         messages: [
@@ -1728,8 +1842,8 @@ const BackgroundAgent = (() => {
   }
 
   function _appendAssistantMessage(providerKey, history, response) {
-    const normalizedKey = String(providerKey || '').trim().toLowerCase();
-    if (normalizedKey === 'gemini') {
+    const providerType = _getProviderType(providerKey);
+    if (providerType === 'gemini') {
       const parts = [];
       if (response.text) {
         parts.push({ text: response.text });
@@ -1750,7 +1864,7 @@ const BackgroundAgent = (() => {
       }
       history.contents.push({ role: 'model', parts });
       return history;
-    } else if (normalizedKey === 'claude') {
+    } else if (providerType === 'claude') {
       const content = [];
       if (response.text) {
         content.push({ type: 'text', text: response.text });
@@ -1790,8 +1904,8 @@ const BackgroundAgent = (() => {
   }
 
   function _appendToolResults(providerKey, history, toolResults) {
-    const normalizedKey = String(providerKey || '').trim().toLowerCase();
-    if (normalizedKey === 'gemini') {
+    const providerType = _getProviderType(providerKey);
+    if (providerType === 'gemini') {
       const parts = toolResults.map(res => ({
         functionResponse: {
           name: res.name,
@@ -1800,7 +1914,7 @@ const BackgroundAgent = (() => {
       }));
       history.contents.push({ role: 'user', parts });
       return history;
-    } else if (normalizedKey === 'claude') {
+    } else if (providerType === 'claude') {
       const content = toolResults.map(res => ({
         type: 'tool_result',
         tool_use_id: res.id,
@@ -1826,10 +1940,10 @@ const BackgroundAgent = (() => {
    * Estime le nombre cumulé de tokens dans l'historique.
    */
   function _estimateHistoryTokens(providerKey, history) {
-    const normalizedKey = String(providerKey || '').trim().toLowerCase();
+    const providerType = _getProviderType(providerKey);
     let tokens = 0;
     try {
-      if (normalizedKey === 'gemini') {
+      if (providerType === 'gemini') {
         const contents = history.contents || [];
         contents.forEach(msg => {
           if (Array.isArray(msg.parts)) {
@@ -1869,8 +1983,8 @@ const BackgroundAgent = (() => {
    * Sinon, conserve 100% de la fidélité de recherche de l'agent.
    */
   function _compactHistory(providerKey, history, journal) {
-    const normalizedKey = String(providerKey || '').trim().toLowerCase();
-    const totalTokens = _estimateHistoryTokens(normalizedKey, history);
+    const providerType = _getProviderType(providerKey);
+    const totalTokens = _estimateHistoryTokens(providerKey, history);
     const COMPACTION_THRESHOLD_TOKENS = 150000; // 150K tokens
 
     if (totalTokens < COMPACTION_THRESHOLD_TOKENS) {
@@ -1881,7 +1995,7 @@ const BackgroundAgent = (() => {
     _log(journal, 'reactive_compact_start', `Taille de contexte (${totalTokens} tokens) supérieure au seuil (${COMPACTION_THRESHOLD_TOKENS} tokens). Déclenchement de la compaction réactive.`);
 
     try {
-      if (normalizedKey === 'gemini') {
+      if (providerType === 'gemini') {
         const contents = history.contents || [];
         const searchResponses = [];
         contents.forEach((msg, msgIdx) => {
@@ -1902,7 +2016,7 @@ const BackgroundAgent = (() => {
           });
           _log(journal, 'micro_compact', `Compacted ${toCompact.length} old search response(s) for Gemini.`);
         }
-      } else if (normalizedKey === 'claude') {
+      } else if (providerType === 'claude') {
         const messages = history.messages || [];
         const searchResults = [];
         messages.forEach((msg, msgIdx) => {
@@ -1949,19 +2063,16 @@ const BackgroundAgent = (() => {
   // ────────────────────────────────────────────────
 
   async function _callLLMWithTools(providerKey, apiKeys, model, history, images, tools, signal) {
-    const normalizedKey = String(providerKey || '').trim().toLowerCase();
-    const provider = Object.prototype.hasOwnProperty.call(QuizProviders.PROVIDERS, normalizedKey)
-      ? QuizProviders.PROVIDERS[normalizedKey]
-      : null;
+    const normalizedKey = _normalizeProviderKey(providerKey);
+    const provider = _getProviderDef(normalizedKey);
     if (!provider) {
       throw new Error(`Provider inconnu: ${providerKey}`);
     }
-    const apiKey = (apiKeys && Object.prototype.hasOwnProperty.call(apiKeys, provider.apiKeyField))
-      ? apiKeys[provider.apiKeyField]
-      : null;
+    const { apiKey, providerConfig } = _resolveRuntimeConfig(normalizedKey, apiKeys);
     if (!apiKey) {
       throw new Error(`Clé API manquante pour le provider: ${provider.name}`);
     }
+    const providerType = _getProviderType(normalizedKey);
 
     const hasImages = images && images.length > 0;
     const providerModelsObj = hasImages ? (provider.visionModels || []) : (provider.textModels || []);
@@ -1982,12 +2093,12 @@ const BackgroundAgent = (() => {
           console.warn(`🔄 Fallback modèle interne: essai de ${candidateModel} car ${model} a échoué`);
         }
         let result;
-        if (normalizedKey === 'gemini') {
+        if (providerType === 'gemini') {
           result = await _callGeminiWithTools(apiKey, candidateModel, history, images, tools, signal);
-        } else if (normalizedKey === 'claude') {
-          result = await _callClaudeWithTools(apiKey, candidateModel, history, images, tools, signal);
+        } else if (providerType === 'claude') {
+          result = await _callClaudeWithTools(apiKey, candidateModel, history, images, tools, signal, normalizedKey, providerConfig);
         } else {
-          result = await _callOpenAIWithTools(normalizedKey, apiKey, candidateModel, history, images, tools, signal);
+          result = await _callOpenAIWithTools(normalizedKey, apiKey, candidateModel, history, images, tools, signal, providerConfig);
         }
         if (analytics && typeof analytics.record === 'function') {
           analytics.record({
@@ -2020,10 +2131,10 @@ const BackgroundAgent = (() => {
     throw lastError || new Error(`Tous les modèles ont échoué pour le provider ${normalizedKey}`);
   }
 
-  // --- OpenAI / Groq / Mistral / NVIDIA tool calling ---
-  async function _callOpenAIWithTools(providerKey, apiKey, model, history, images, tools, signal) {
+  // --- OpenAI-compatible tool calling ---
+  async function _callOpenAIWithTools(providerKey, apiKey, model, history, images, tools, signal, providerConfig = null) {
     const normalizedKey = String(providerKey).toLowerCase();
-    const provider = QuizProviders.PROVIDERS[normalizedKey];
+    const provider = _getProviderDef(normalizedKey);
     const payloadTools = tools.map(t => ({
       type: 'function',
       function: {
@@ -2037,6 +2148,9 @@ const BackgroundAgent = (() => {
       model: model,
       messages: history.messages
     };
+    if (provider && provider.maxTokensField === 'max_completion_tokens') {
+      payload.max_completion_tokens = 4096;
+    }
 
     if (payloadTools.length > 0) {
       payload.tools = payloadTools;
@@ -2073,17 +2187,19 @@ const BackgroundAgent = (() => {
       }
     }
 
-    let targetBaseUrl = provider.baseUrl;
-    if (normalizedKey === 'mistral' && model.toLowerCase().includes('codestral')) {
-      targetBaseUrl = 'https://codestral.mistral.ai/v1';
-    }
+    const targetBaseUrl = _resolveEndpointBaseUrl(normalizedKey, provider, providerConfig, model);
+    const endpoint = _buildEndpointUrl(targetBaseUrl, '/chat/completions');
+    const customHeaders = (provider && provider.defaultHeaders && typeof provider.defaultHeaders === 'object')
+      ? provider.defaultHeaders
+      : {};
 
-    const response = await QuizProviders.extensionFetch(`${targetBaseUrl}/chat/completions`, {
+    const response = await QuizProviders.extensionFetch(endpoint, {
       method: 'POST',
       headers: {
+        ...customHeaders,
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'Accept': 'application/json'
+        'Accept': customHeaders.Accept || 'application/json'
       },
       body: JSON.stringify(payload),
       signal
@@ -2091,7 +2207,7 @@ const BackgroundAgent = (() => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      const apiErr = new Error(err.error?.message || `Erreur OpenAI API: HTTP ${response.status}`);
+      const apiErr = new Error(err.error?.message || `Erreur ${provider?.name || 'OpenAI'} API: HTTP ${response.status}`);
       apiErr.status = response.status;
       throw apiErr;
     }
@@ -2116,8 +2232,10 @@ const BackgroundAgent = (() => {
     return { text, toolCalls };
   }
 
-  // --- Claude tool calling ---
-  async function _callClaudeWithTools(apiKey, model, history, images, tools, signal) {
+  // --- Claude & Anthropic-compatible tool calling ---
+  async function _callClaudeWithTools(apiKey, model, history, images, tools, signal, providerKey = 'claude', providerConfig = null) {
+    const normKey = _normalizeProviderKey(providerKey) || 'claude';
+    const provider = _getProviderDef(normKey) || _getProviderDef('claude');
     const payloadTools = tools.map(t => ({
       name: t.name,
       description: t.description,
@@ -2161,21 +2279,28 @@ const BackgroundAgent = (() => {
       payload.system = history.system;
     }
 
-    const response = await QuizProviders.extensionFetch('https://api.anthropic.com/v1/messages', {
+    const baseUrl = _resolveEndpointBaseUrl(normKey, provider, providerConfig, model) || 'https://api.anthropic.com/v1';
+    const endpoint = _buildEndpointUrl(baseUrl, (provider && provider.messagesPath) || '/messages');
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    };
+    if (provider && provider.sendBearerAuth === true && apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const response = await QuizProviders.extensionFetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
+      headers,
       body: JSON.stringify(payload),
       signal
     });
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      const apiErr = new Error(err.error?.message || `Erreur Claude API: HTTP ${response.status}`);
+      const apiErr = new Error(err.error?.message || `Erreur ${provider?.name || 'Claude'} API: HTTP ${response.status}`);
       apiErr.status = response.status;
       throw apiErr;
     }
@@ -2492,7 +2617,7 @@ const BackgroundAgent = (() => {
             // Pour les retries, on fait un appel direct simple (pas de boucle ReAct pour aller vite)
             response = await _callLLMWithTools(
               pKey,
-              task.config.apiKeys || {},
+              { ...(syncConfig || {}), ...(task.config.apiKeys || {}) },
               currentModel,
               messages,
               retryImages,
@@ -3104,15 +3229,33 @@ const BackgroundAgent = (() => {
     
     // Normalisation du config : accepte le format plat (ConfigCache.getAll())
     // ET le format structuré (task.config avec syncConfig/apiKeys séparés)
-    const syncConfig = config.syncConfig || config || {};
-    const apiKeys = config.apiKeys || config || {};
+    const rawCfg = (config && typeof config === 'object') ? config : {};
+    const syncConfig = (rawCfg.syncConfig && typeof rawCfg.syncConfig === 'object')
+      ? { ...rawCfg, ...rawCfg.syncConfig }
+      : { ...rawCfg };
+    const apiKeys = (rawCfg.apiKeys && typeof rawCfg.apiKeys === 'object')
+      ? { ...rawCfg, ...rawCfg.apiKeys }
+      : { ...rawCfg };
+    const isServiceWorkerCtx = typeof ServiceWorkerGlobalScope !== 'undefined' &&
+      self instanceof ServiceWorkerGlobalScope;
+    if (isServiceWorkerCtx) {
+      delete syncConfig.providerConfigs;
+      delete apiKeys.providerConfigs;
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === 'function') {
+        try {
+          const localData = await chrome.storage.local.get(['providerConfigs']);
+          const trustedCfgs = (localData && localData.providerConfigs && typeof localData.providerConfigs === 'object')
+            ? localData.providerConfigs
+            : {};
+          syncConfig.providerConfigs = trustedCfgs;
+          apiKeys.providerConfigs = trustedCfgs;
+        } catch (_) { /* fallback {} */ }
+      }
+    }
     const mergedConfig = { ...syncConfig, ...apiKeys };
 
     // Construire la liste ordonnée des providers configurés (clé API présente)
-    const configuredProviders = _getAllConfiguredProviders(
-      { syncConfig: mergedConfig, apiKeys: mergedConfig },
-      syncConfig.providerOrder || QuizProviders.DEFAULT_PRIORITY
-    );
+    const configuredProviders = _getStrictlyConfiguredProviders(mergedConfig, syncConfig.providerOrder);
 
     if (configuredProviders.length === 0) {
       return { success: false, reason: "No configured provider for feedback" };
@@ -3127,11 +3270,9 @@ const BackgroundAgent = (() => {
     // Cascade multi-provider : essayer chaque provider configuré jusqu'au succès
     let lastError = null;
     for (const providerKey of configuredProviders) {
-      const provider = QuizProviders.PROVIDERS[providerKey];
+      const provider = _getProviderDef(providerKey);
       if (!provider) continue;
-
-      const apiKey = mergedConfig[provider.apiKeyField];
-      if (!apiKey || apiKey.trim().length === 0) continue;
+      if (!_isProviderConfigured(providerKey, mergedConfig)) continue;
 
       const model = QuizProviders.getModelForContext(providerKey, false, (syncConfig.customModels || {}));
       const messages = _initHistory(providerKey, "Tu es un système d'apprentissage et de réflexion post-action.", prompt);

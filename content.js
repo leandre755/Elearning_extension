@@ -1024,15 +1024,21 @@
       return { success: false, error: 'Aucune question trouvée sur cette page, même après analyse approfondie.' };
     }
 
-    // Extraire les clés API du config mergé (ConfigCache fusionne sync + local)
-    const apiKeys = {
-      groqApiKey: syncConfig.groqApiKey || '',
-      geminiApiKey: syncConfig.geminiApiKey || '',
-      nvidiaApiKey: syncConfig.nvidiaApiKey || '',
-      mistralApiKey: syncConfig.mistralApiKey || '',
-      claudeApiKey: syncConfig.claudeApiKey || '',
-      serpApiKey: syncConfig.serpApiKey || ''
-    };
+    // Extraire les clés API et configurations fournisseurs du config mergé (ConfigCache fusionne sync + local)
+    const apiKeys = {};
+    const qp = rootWin.QuizProviders || (typeof QuizProviders !== 'undefined' ? QuizProviders : null);
+    const localStorageFields = (qp && typeof qp.getAllStorageKeys === 'function')
+      ? qp.getAllStorageKeys()
+      : ['groqApiKey', 'geminiApiKey', 'nvidiaApiKey', 'mistralApiKey', 'claudeApiKey', 'providerConfigs', 'serpApiKey'];
+    for (const field of localStorageFields) {
+      if (field === 'providerConfigs') {
+        if (syncConfig.providerConfigs && typeof syncConfig.providerConfigs === 'object') {
+          apiKeys.providerConfigs = syncConfig.providerConfigs;
+        }
+      } else {
+        apiKeys[field] = syncConfig[field] || '';
+      }
+    }
 
     try {
       // ─── Construire la tâche pour le Background Agent ───

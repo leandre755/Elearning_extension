@@ -338,6 +338,7 @@ body {
 }
 
 /* Checkboxes */
+.setting-item label.checkbox-label,
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -518,6 +519,130 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-bottom-color: var(--accent-text);
 }
 
+/* Providers Search & Filter Toolbar */
+.providers-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.providers-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#providerSearchInput {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+  background: var(--paper-base);
+  color: var(--ink-primary);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#providerSearchInput:focus {
+  outline: none;
+  border-color: var(--n3-blue);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.provider-filter-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  background: var(--paper-base);
+}
+
+.provider-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-filter-btn {
+  background: var(--paper-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.provider-filter-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
+}
+
+.provider-filter-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--n3-blue);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.providers-empty-state {
+  padding: 16px 12px;
+  text-align: center;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 3px;
+  margin-top: 8px;
+}
+
+.sync-models-btn {
+  background: var(--paper-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 10px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.sync-models-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
+}
+
+.sync-models-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.provider-secondary-field {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+.provider-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.priority-toolbar {
+  margin-bottom: 12px;
+}
+
 /* API Keys Accordion */
 .keys-accordion {
   display: flex;
@@ -607,6 +732,18 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: var(--success-bg);
   color: var(--success-color);
   border: 1px solid var(--success-color);
+}
+
+.key-status-badge.badge-warning {
+  background: var(--warning-bg);
+  color: var(--warning-color);
+  border: 1px solid var(--warning-color);
+}
+
+.provider-tier-local {
+  border-color: var(--n3-blue);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
 /* Discretion Slider */

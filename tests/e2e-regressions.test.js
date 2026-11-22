@@ -240,9 +240,15 @@ function makeDoc() {
 // ===========================================================================
 test('BUG-01: settings.html omits Fireworks card and settings.js testProvider handles unknown providers without crashing', async () => {
   const html = fs.readFileSync(path.join(TARGET_ROOT, 'settings.html'), 'utf8');
-  assert.ok(!html.includes('card-fireworks'), 'settings.html must not contain #card-fireworks');
-  assert.ok(!html.includes('fireworksApiKey'), 'settings.html must not contain fireworksApiKey');
-  assert.ok(html.includes('card-groq') && html.includes('card-gemini') && html.includes('card-claude'));
+  assert.ok(!html.includes('card-fireworks'), 'settings.html must not contain static #card-fireworks');
+  assert.ok(!html.includes('fireworksApiKey'), 'settings.html must not contain static fireworksApiKey');
+  assert.ok(html.includes('id="providersAccordion"'), 'settings.html must expose #providersAccordion for dynamic provider cards');
+  assert.ok(
+    html.indexOf('provider-catalog.js') !== -1 &&
+    html.indexOf('providers.js') !== -1 &&
+    html.indexOf('provider-catalog.js') < html.indexOf('providers.js'),
+    'settings.html must load provider-catalog.js before providers.js'
+  );
 
   const doc = makeDoc();
   const saveStatus = makeElement('DIV', { id: 'saveStatus' });
@@ -1061,7 +1067,13 @@ test('BUG-06b: popup.js analyzeQuiz does not call chrome.scripting.executeScript
   const missEnv = makePopupEnv('missing_then_ok');
   await missEnv.PopupAPI.analyzeQuiz();
   assert.equal(missEnv.getSendCalls(), 2, 'Missing receiver must retry once after script injection');
-  assert.equal(missEnv.executeScriptCalls.length, 6, 'Missing receiver must inject all 6 core files');
+  assert.equal(missEnv.executeScriptCalls.length, 7, 'Missing receiver must inject all 7 core files');
+  const injectedFiles = missEnv.executeScriptCalls.flat();
+  assert.ok(
+    injectedFiles.indexOf('provider-catalog.js') !== -1 &&
+    injectedFiles.indexOf('provider-catalog.js') < injectedFiles.indexOf('providers.js'),
+    'Missing receiver must inject provider-catalog.js before providers.js'
+  );
   assert.ok(missEnv.progressText.textContent.includes('1/1 réponse trouvée'));
 });
 

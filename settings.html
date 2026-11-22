@@ -124,111 +124,37 @@
         <section class="settings-card">
           <div class="card-header">
             <h2>Clés API</h2>
-            <p class="section-description">Ajoutez au moins une clé. Si plusieurs sont renseignées, l'extension bascule automatiquement sur la suivante en cas de limite de quota.</p>
+            <p class="section-description">Configurez un ou plusieurs fournisseurs (cloud ou locaux). En cas de limite de quota, l'extension bascule automatiquement selon votre ordre de priorité.</p>
           </div>
 
-          <div class="keys-accordion">
-            <!-- GROQ -->
-            <details class="key-card" name="api-keys" id="card-groq">
-              <summary class="key-card-header">
-                <span class="provider-title">Groq <span class="provider-tier">Gratuit</span></span>
-                <span class="key-status-badge badge-empty" id="groqStatusBadge">Non configurée</span>
-              </summary>
-              <div class="key-card-content">
-                <div class="setting-item">
-                  <label for="groqApiKey">Clé API Groq</label>
-                  <div class="input-group">
-                    <input type="password" id="groqApiKey" placeholder="gsk_...">
-                    <button type="button" class="toggle-visibility" data-target="groqApiKey">Voir</button>
-                    <button type="button" class="test-btn" data-provider="groq">Tester</button>
-                  </div>
-                  <p class="help-text">Créer une clé sur <a href="https://console.groq.com/" target="_blank" rel="noopener">console.groq.com</a></p>
-                </div>
-              </div>
-            </details>
-
-            <!-- GEMINI -->
-            <details class="key-card" name="api-keys" id="card-gemini">
-              <summary class="key-card-header">
-                <span class="provider-title">Google Gemini <span class="provider-tier">Gratuit</span></span>
-                <span class="key-status-badge badge-empty" id="geminiStatusBadge">Non configurée</span>
-              </summary>
-              <div class="key-card-content">
-                <div class="setting-item">
-                  <label for="geminiApiKey">Clé API Gemini</label>
-                  <div class="input-group">
-                    <input type="password" id="geminiApiKey" placeholder="AIza...">
-                    <button type="button" class="toggle-visibility" data-target="geminiApiKey">Voir</button>
-                    <button type="button" class="test-btn" data-provider="gemini">Tester</button>
-                  </div>
-                  <p class="help-text">Créer une clé sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a></p>
-                </div>
-              </div>
-            </details>
-
-            <!-- CLAUDE -->
-            <details class="key-card" name="api-keys" id="card-claude">
-              <summary class="key-card-header">
-                <span class="provider-title">Anthropic Claude <span class="provider-tier">Payant</span></span>
-                <span class="key-status-badge badge-empty" id="claudeStatusBadge">Non configurée</span>
-              </summary>
-              <div class="key-card-content">
-                <div class="setting-item">
-                  <label for="claudeApiKey">Clé API Claude</label>
-                  <div class="input-group">
-                    <input type="password" id="claudeApiKey" placeholder="sk-ant-...">
-                    <button type="button" class="toggle-visibility" data-target="claudeApiKey">Voir</button>
-                    <button type="button" class="test-btn" data-provider="claude">Tester</button>
-                  </div>
-                  <p class="help-text">Créer une clé sur <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a></p>
-                </div>
-              </div>
-            </details>
-
-            <!-- MISTRAL -->
-            <details class="key-card" name="api-keys" id="card-mistral">
-              <summary class="key-card-header">
-                <span class="provider-title">Mistral AI</span>
-                <span class="key-status-badge badge-empty" id="mistralStatusBadge">Non configurée</span>
-              </summary>
-              <div class="key-card-content">
-                <div class="setting-item">
-                  <label for="mistralApiKey">Clé API Mistral</label>
-                  <div class="input-group">
-                    <input type="password" id="mistralApiKey" placeholder="...">
-                    <button type="button" class="toggle-visibility" data-target="mistralApiKey">Voir</button>
-                    <button type="button" class="test-btn" data-provider="mistral">Tester</button>
-                  </div>
-                  <p class="help-text">Créer une clé sur <a href="https://console.mistral.ai/" target="_blank" rel="noopener">console.mistral.ai</a></p>
-                </div>
-              </div>
-            </details>
-
-            <!-- NVIDIA -->
-            <details class="key-card" name="api-keys" id="card-nvidia">
-              <summary class="key-card-header">
-                <span class="provider-title">NVIDIA NIM <span class="provider-tier">Gratuit</span></span>
-                <span class="key-status-badge badge-empty" id="nvidiaStatusBadge">Non configurée</span>
-              </summary>
-              <div class="key-card-content">
-                <div class="setting-item">
-                  <label for="nvidiaApiKey">Clé API NVIDIA NIM</label>
-                  <div class="input-group">
-                    <input type="password" id="nvidiaApiKey" placeholder="nvapi-...">
-                    <button type="button" class="toggle-visibility" data-target="nvidiaApiKey">Voir</button>
-                    <button type="button" class="test-btn" data-provider="nvidia">Tester</button>
-                  </div>
-                  <p class="help-text">Créer une clé sur <a href="https://build.nvidia.com/" target="_blank" rel="noopener">build.nvidia.com</a></p>
-                </div>
-              </div>
-            </details>
+          <div class="providers-toolbar">
+            <div class="providers-search-row">
+              <input type="search" id="providerSearchInput" placeholder="Rechercher un fournisseur (OpenRouter, Ollama, Azure…)" aria-label="Rechercher un fournisseur">
+              <span class="provider-filter-count" id="providerFilterCount">0 / 0</span>
+            </div>
+            <div class="provider-filter-group" role="group" aria-label="Filtrer les fournisseurs">
+              <button type="button" class="provider-filter-btn active" data-filter="all">Tous</button>
+              <button type="button" class="provider-filter-btn" data-filter="configured">Configurés</button>
+              <button type="button" class="provider-filter-btn" data-filter="cloud">Cloud</button>
+              <button type="button" class="provider-filter-btn" data-filter="local">Locaux</button>
+            </div>
           </div>
+
+          <div class="keys-accordion" id="providersAccordion"></div>
+          <p class="help-text providers-empty-state" id="providersEmptyState" hidden>Aucun fournisseur ne correspond au filtre.</p>
         </section>
 
         <section class="settings-card">
           <div class="card-header">
             <h2>Ordre des fournisseurs</h2>
-            <p class="section-description">Glissez les lignes pour définir l'ordre de secours entre vos clés.</p>
+            <p class="section-description">Glissez les lignes pour définir l'ordre de secours entre vos fournisseurs.</p>
+          </div>
+
+          <div class="setting-item priority-toolbar">
+            <label class="checkbox-label">
+              <input type="checkbox" id="showAllPriorityProviders">
+              <span>Afficher tous les fournisseurs</span>
+            </label>
           </div>
 
           <div id="priorityList" class="priority-list"></div>
@@ -369,6 +295,13 @@
             <p class="section-description">Remplacez les modèles par défaut pour le texte ou la vision. Laissez vide pour garder le choix automatique.</p>
           </div>
 
+          <div class="setting-item priority-toolbar">
+            <label class="checkbox-label">
+              <input type="checkbox" id="showAllModelOverrides">
+              <span>Afficher tous les fournisseurs</span>
+            </label>
+          </div>
+
           <div id="modelOverrides" class="model-overrides-grid"></div>
         </section>
 
@@ -450,6 +383,7 @@
     </footer>
   </div>
 
+  <script src="provider-catalog.js"></script>
   <script src="providers.js"></script>
   <script src="schema-cache.js"></script>
   <script src="nlp-cleaner.js"></script>

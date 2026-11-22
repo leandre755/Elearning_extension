@@ -2,6 +2,26 @@
 // providers.js — Multi-Provider LLM Registry, Smart Switcher & Router
 // ============================================================
 
+const _LoadedProviderCatalog = (() => {
+  if (typeof globalThis !== 'undefined' && globalThis.ProviderCatalog) {
+    return globalThis.ProviderCatalog;
+  }
+  if (typeof self !== 'undefined' && self.ProviderCatalog) {
+    return self.ProviderCatalog;
+  }
+  if (typeof window !== 'undefined' && window.ProviderCatalog) {
+    return window.ProviderCatalog;
+  }
+  if (typeof require === 'function') {
+    try {
+      return require('./provider-catalog.js');
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+})();
+
 const ConfigCache = (() => {
   'use strict';
 
@@ -16,11 +36,19 @@ const ConfigCache = (() => {
     'providerOrder', 'customModels', 'agenticSearch', 'autoMode', 'enabled'
   ];
 
-  const LOCAL_KEYS = [
+  const _extraApiKeyFields = (_LoadedProviderCatalog && _LoadedProviderCatalog.EXTRA_PROVIDERS)
+    ? Object.values(_LoadedProviderCatalog.EXTRA_PROVIDERS)
+        .map(p => p && p.apiKeyField)
+        .filter(f => typeof f === 'string' && f.length > 0)
+    : [];
+
+  const LOCAL_KEYS = [...new Set([
     'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
     'mistralApiKey', 'claudeApiKey',
+    ..._extraApiKeyFields,
+    'providerConfigs',
     'serpApiKey', 'contextFiles'
-  ];
+  ])];
 
   async function init() {
     if (_initialized) {
@@ -844,8 +872,13 @@ const QuizProviders = (() => {
       name: 'Groq',
       icon: '⚡',
       type: 'openai-compatible',
+      category: 'cloud',
+      local: false,
+      tierLabel: 'Gratuit',
       baseUrl: 'https://api.groq.com/openai/v1',
       apiKeyField: 'groqApiKey',
+      keyPlaceholder: 'gsk_...',
+      credentialUrl: 'https://console.groq.com/keys',
       textModels: [
         // Contextes vérifiés depuis console.groq.com/docs/models
         { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Recommandé)', free: true, contextLimit: 131072 },
@@ -867,8 +900,13 @@ const QuizProviders = (() => {
       name: 'Gemini',
       icon: '💎',
       type: 'gemini',
+      category: 'cloud',
+      local: false,
+      tierLabel: 'Gratuit',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKeyField: 'geminiApiKey',
+      keyPlaceholder: 'AIza...',
+      credentialUrl: 'https://aistudio.google.com/apikey',
       textModels: [
         // Gemini 4 / 3.x et Gemma 4 vérifiés sur ai.google.dev/gemini-api/docs/models & /docs/pricing
         { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen (Recommandé)', free: true, contextLimit: 1048576 },
@@ -903,8 +941,13 @@ const QuizProviders = (() => {
       name: 'NVIDIA NIM',
       icon: '🟢',
       type: 'openai-compatible',
+      category: 'cloud',
+      local: false,
+      tierLabel: 'Gratuit',
       baseUrl: 'https://integrate.api.nvidia.com/v1',
       apiKeyField: 'nvidiaApiKey',
+      keyPlaceholder: 'nvapi-...',
+      credentialUrl: 'https://build.nvidia.com/settings/api-keys',
       textModels: [
         // Catalogue live vérifié sur integrate.api.nvidia.com/v1/models (crédits gratuits build.nvidia.com)
         { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi k3.1 Pro (Thinking)', free: true, contextLimit: 1048576 },
@@ -933,8 +976,13 @@ const QuizProviders = (() => {
       name: 'Mistral',
       icon: '🌀',
       type: 'openai-compatible',
+      category: 'cloud',
+      local: false,
+      tierLabel: 'Cloud',
       baseUrl: 'https://api.mistral.ai/v1',
       apiKeyField: 'mistralApiKey',
+      keyPlaceholder: '...',
+      credentialUrl: 'https://console.mistral.ai/',
       textModels: [
         { id: 'mistral-small-latest', label: 'Mistral Small 4 (Rapide)', free: false, contextLimit: 256000 },
         { id: 'mistral-large-latest', label: 'Mistral Large 4 (Flagship)', free: false, contextLimit: 1000000 },
@@ -952,8 +1000,13 @@ const QuizProviders = (() => {
       name: 'Claude',
       icon: '🟣',
       type: 'claude',
+      category: 'cloud',
+      local: false,
+      tierLabel: 'Payant',
       baseUrl: 'https://api.anthropic.com/v1',
       apiKeyField: 'claudeApiKey',
+      keyPlaceholder: 'sk-ant-...',
+      credentialUrl: 'https://console.anthropic.com/',
       textModels: [
         { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (Recommandé)', free: false, contextLimit: 1000000 },
         { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (Flagship)', free: false, contextLimit: 1000000 },
@@ -969,6 +1022,8 @@ const QuizProviders = (() => {
       defaultTextModel: 'claude-sonnet-5-5',
       defaultVisionModel: 'claude-sonnet-5-5',
     },
+
+    ...(_LoadedProviderCatalog && _LoadedProviderCatalog.EXTRA_PROVIDERS ? _LoadedProviderCatalog.EXTRA_PROVIDERS : {})
   };
 
   // Default provider priority (free-first)
@@ -1041,17 +1096,98 @@ const QuizProviders = (() => {
     return (modelObj && modelObj.contextLimit) ? modelObj.contextLimit : 100000;
   }
 
+  function _normalizeProviderKey(rawKey) {
+    if (typeof rawKey !== 'string') return '';
+    const norm = rawKey.trim().toLowerCase();
+    if (!norm || norm === '__proto__' || norm === 'constructor' || norm === 'prototype') {
+      return '';
+    }
+    return norm;
+  }
+
+  function _getProviderDef(providerKey) {
+    const key = _normalizeProviderKey(providerKey);
+    if (!key) return null;
+    return Object.prototype.hasOwnProperty.call(PROVIDERS, key) ? PROVIDERS[key] : null;
+  }
+
+  function _buildEndpointUrl(baseUrl, suffix) {
+    if (_LoadedProviderCatalog && typeof _LoadedProviderCatalog.buildEndpointUrl === 'function') {
+      return _LoadedProviderCatalog.buildEndpointUrl(baseUrl, suffix);
+    }
+    const cleanBase = typeof baseUrl === 'string' ? baseUrl.trim().replace(/\/+$/, '') : '';
+    const cleanSuffix = typeof suffix === 'string' ? suffix.trim() : '';
+    if (!cleanBase) return '';
+    if (!cleanSuffix) return cleanBase;
+    return `${cleanBase}${cleanSuffix.startsWith('/') ? cleanSuffix : `/${cleanSuffix}`}`;
+  }
+
+  function isProviderConfigured(providerKey, config) {
+    const normalizedKey = _normalizeProviderKey(providerKey);
+    const provider = _getProviderDef(normalizedKey);
+    if (!provider || !config || typeof config !== 'object') {
+      return false;
+    }
+    if (_LoadedProviderCatalog && typeof _LoadedProviderCatalog.isProviderConfigured === 'function') {
+      return _LoadedProviderCatalog.isProviderConfigured(normalizedKey, provider, config);
+    }
+    const field = provider.apiKeyField;
+    return Boolean(
+      field &&
+      Object.prototype.hasOwnProperty.call(config, field) &&
+      typeof config[field] === 'string' &&
+      config[field].trim().length > 0
+    );
+  }
+
+  function resolveProviderBaseUrl(providerKey, providerConfig, modelId) {
+    const normalizedKey = _normalizeProviderKey(providerKey);
+    const provider = _getProviderDef(normalizedKey);
+    if (!provider) {
+      throw new Error(`Provider inconnu: ${providerKey}`);
+    }
+    if (_LoadedProviderCatalog && typeof _LoadedProviderCatalog.resolveProviderBaseUrl === 'function') {
+      return _LoadedProviderCatalog.resolveProviderBaseUrl(normalizedKey, provider, providerConfig, modelId);
+    }
+    if (normalizedKey === 'mistral' && typeof modelId === 'string' && modelId.toLowerCase().includes('codestral')) {
+      return 'https://codestral.mistral.ai/v1';
+    }
+    return provider.baseUrl || '';
+  }
+
+  function resolveProviderRuntimeConfig(providerKey, config) {
+    const normalizedKey = _normalizeProviderKey(providerKey);
+    const provider = _getProviderDef(normalizedKey);
+    if (_LoadedProviderCatalog && typeof _LoadedProviderCatalog.resolveProviderRuntimeConfig === 'function') {
+      return _LoadedProviderCatalog.resolveProviderRuntimeConfig(normalizedKey, provider, config);
+    }
+    const field = provider && provider.apiKeyField;
+    const rawKey = (config && field && Object.prototype.hasOwnProperty.call(config, field) && typeof config[field] === 'string')
+      ? config[field].trim()
+      : '';
+    return {
+      apiKey: rawKey || (provider && provider.local ? (provider.staticApiKey || 'local') : ''),
+      providerConfig: {},
+      baseUrl: provider ? (provider.baseUrl || '') : ''
+    };
+  }
+
   /**
-   * Helper to find the first provider in priority list that has an API key configured.
+   * Helper to find the first provider in priority list that is configured.
    */
   function getFirstConfiguredProvider(syncConfig, order) {
-    for (const pKey of order) {
-      const provider = PROVIDERS[pKey];
-      if (provider && syncConfig[provider.apiKeyField] && syncConfig[provider.apiKeyField].length > 0) {
+    const ordered = Array.isArray(order) && order.length > 0 ? order : DEFAULT_PRIORITY;
+    for (const pKey of ordered) {
+      if (isProviderConfigured(pKey, syncConfig)) {
+        return _normalizeProviderKey(pKey);
+      }
+    }
+    for (const pKey of Object.keys(PROVIDERS)) {
+      if (isProviderConfigured(pKey, syncConfig)) {
         return pKey;
       }
     }
-    return order[0]; // fallback
+    return ordered[0]; // fallback
   }
 
   // ──────────────────────────────────────────────
@@ -1253,8 +1389,54 @@ const QuizProviders = (() => {
    * @returns {Promise<Response>}
    */
   const _sanitizeUrl = _ProviderNetUtils.sanitizeUrl;
+  const _SW_FALLBACK_HOST_RE = /^(?:api\.groq\.com|generativelanguage\.googleapis\.com|integrate\.api\.nvidia\.com|api\.mistral\.ai|codestral\.mistral\.ai|api\.anthropic\.com)$/;
+  const _SW_BEDROCK_RE = /^bedrock-mantle\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.api\.aws$/;
+  const _SW_AZURE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.openai\.azure\.com$/;
+
+  async function _enforceDirectFetchPolicy(url) {
+    const isSW = typeof ServiceWorkerGlobalScope !== 'undefined' &&
+      self instanceof ServiceWorkerGlobalScope;
+    if (!isSW) return;
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch (_) {
+      throw new Error('URL non autorisée dans le Service Worker');
+    }
+
+    if (typeof isAllowedLLMUrl === 'function') {
+      const storedConfigs = typeof getStoredProviderConfigs === 'function'
+        ? await getStoredProviderConfigs()
+        : {};
+      if (!isAllowedLLMUrl(parsedUrl, storedConfigs)) {
+        throw new Error('URL non autorisée pour les appels LLM du Service Worker');
+      }
+      return;
+    }
+
+    if (parsedUrl.username || parsedUrl.password) {
+      throw new Error('URL non autorisée dans le Service Worker');
+    }
+    const proto = parsedUrl.protocol.toLowerCase();
+    const port = parsedUrl.port || '';
+    const hostname = parsedUrl.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+    const staticHosts = (_LoadedProviderCatalog && Array.isArray(_LoadedProviderCatalog.LLM_STATIC_ALLOWED_HOSTS))
+      ? _LoadedProviderCatalog.LLM_STATIC_ALLOWED_HOSTS
+      : null;
+    const allowedStatic = proto === 'https:' && (!port || port === '443') && (
+      (staticHosts ? staticHosts.includes(hostname) : _SW_FALLBACK_HOST_RE.test(hostname)) ||
+      _SW_BEDROCK_RE.test(hostname) ||
+      _SW_AZURE_RE.test(hostname)
+    );
+    if (!allowedStatic) {
+      throw new Error('URL non autorisée dans le Service Worker');
+    }
+  }
 
   async function _directFetchWithTimeout(url, options, timeoutMs) {
+    await _enforceDirectFetchPolicy(url);
+
     const externalSignal = options?.signal;
     if (externalSignal && externalSignal.aborted) {
       throw _ProviderNetUtils.createAbortError(externalSignal.reason || 'Requête annulée avant envoi (signal externe).');
@@ -1274,9 +1456,9 @@ const QuizProviders = (() => {
     }
 
     try {
-      // Retirer le signal externe des options, on utilise notre controller unifié
+      // Retirer le signal externe des options, on utilise notre controller unifié et interdire les redirections HTTP
       const { signal: _ignoredSignal, ...restOptions } = options || {};
-      const response = await fetch(url, { ...restOptions, signal: controller.signal });
+      const response = await fetch(url, { ...restOptions, redirect: 'error', signal: controller.signal });
       clearTimeout(timeoutId);
       return response;
     } catch (error) {
@@ -1411,10 +1593,14 @@ const QuizProviders = (() => {
       defaultMaxTokens = lowerModel.includes('phi') ? 4096 : 16384;
     }
 
+    const maxTokensField = provider.maxTokensField === 'max_completion_tokens'
+      ? 'max_completion_tokens'
+      : 'max_tokens';
+
     const payload = {
       model: model,
       messages: messages,
-      max_tokens: extraConfig.maxTokens || defaultMaxTokens,
+      [maxTokensField]: extraConfig.maxTokens || defaultMaxTokens,
       // Laisser la température par défaut du provider si non demandée explicitement (et jamais en mode thinking)
       ...(typeof extraConfig.temperature === 'number' && !extraConfig.thinking?.enabled
         ? { temperature: extraConfig.temperature }
@@ -1423,19 +1609,31 @@ const QuizProviders = (() => {
       ...extraBodyParams
     };
 
-    // Routage vers l'endpoint personnalisé pour Codestral si requis
-    let targetBaseUrl = provider ? provider.baseUrl : '';
+    const providerConfig = extraConfig?.providerConfig ||
+      (extraConfig?.providerConfigs && extraConfig.providerConfigs[normalizedKey]) ||
+      null;
+    const effectiveApiKey = (typeof apiKey === 'string' && apiKey.trim().length > 0)
+      ? apiKey.trim()
+      : (provider.local ? (provider.staticApiKey || 'local') : '');
+
+    // Routage dynamique via le catalogue (gère Codestral, Cloudflare, Azure, custom baseUrl, locaux)
+    const targetBaseUrl = resolveProviderBaseUrl(normalizedKey, providerConfig, model);
     if (normalizedKey === 'mistral' && lowerModel.includes('codestral')) {
-      targetBaseUrl = 'https://codestral.mistral.ai/v1';
-      console.log(`✨ Redirection transparente de Codestral vers son endpoint personnalisé : ${targetBaseUrl}`);
+      console.log('✨ Redirection transparente de Codestral vers son endpoint dédié');
     }
 
-    const response = await extensionFetch(`${targetBaseUrl}/chat/completions`, {
+    const endpoint = _buildEndpointUrl(targetBaseUrl, '/chat/completions');
+    const customHeaders = (provider.defaultHeaders && typeof provider.defaultHeaders === 'object')
+      ? provider.defaultHeaders
+      : {};
+
+    const response = await extensionFetch(endpoint, {
       method: 'POST',
       headers: {
+        ...customHeaders,
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'Accept': 'application/json'
+        'Authorization': `Bearer ${effectiveApiKey}`,
+        'Accept': customHeaders.Accept || 'application/json'
       },
       body: JSON.stringify(payload),
       signal: extraConfig?.signal,
@@ -1476,7 +1674,10 @@ const QuizProviders = (() => {
   }
 
   async function callClaudeProvider(apiKey, model, prompt, images = [], maxTokens = 4096, thinkingConfig = null, extraConfig = {}) {
-    console.log(`🟣 [Claude] Appel ${model}...`);
+    const providerKey = _normalizeProviderKey(extraConfig?.providerKey || 'claude') || 'claude';
+    const provider = _getProviderDef(providerKey) || PROVIDERS.claude;
+    const providerName = provider ? provider.name : 'Claude';
+    console.log(`🟣 [${providerName}] Appel ${model}...`);
 
     const systemPrompt = (typeof prompt === 'object' && prompt.system) ? prompt.system : null;
     const userPrompt = (typeof prompt === 'object' && prompt.user) ? prompt.user : (typeof prompt === 'string' ? prompt : '');
@@ -1540,14 +1741,26 @@ const QuizProviders = (() => {
       requestBody.temperature = extraConfig.temperature;
     }
 
-    const response = await extensionFetch('https://api.anthropic.com/v1/messages', {
+    const providerConfig = extraConfig?.providerConfig ||
+      (extraConfig?.providerConfigs && extraConfig.providerConfigs[providerKey]) ||
+      null;
+    const baseUrl = resolveProviderBaseUrl(providerKey, providerConfig, model) || 'https://api.anthropic.com/v1';
+    const messagesPath = (provider && provider.messagesPath) || '/messages';
+    const endpoint = _buildEndpointUrl(baseUrl, messagesPath);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    };
+    if (provider && provider.sendBearerAuth === true && apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const response = await extensionFetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
+      headers,
       body: JSON.stringify(requestBody),
       signal: extraConfig?.signal,
       retry: extraConfig?.retry
@@ -1555,14 +1768,14 @@ const QuizProviders = (() => {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const error = new Error(errorData.error?.message || `Erreur Claude: ${response.status}`);
+      const error = new Error(errorData.error?.message || `Erreur ${providerName}: ${response.status}`);
       error.status = response.status;
-      error.providerName = 'Claude';
+      error.providerName = providerName;
       throw error;
     }
 
     const data = await response.json();
-    console.log(`✅ [Claude] Réponse reçue`);
+    console.log(`✅ [${providerName}] Réponse reçue`);
 
     // Séparation et extraction du flux de pensée (thinking) et du texte final
     const content = data.content || [];
@@ -1578,7 +1791,7 @@ const QuizProviders = (() => {
     }
 
     if (thinkingText) {
-      console.log(`💭 [Claude Thoughts]:\n${thinkingText}`);
+      console.log(`💭 [${providerName} Thoughts]:\n${thinkingText}`);
     }
 
     return outputText || '';
@@ -1699,7 +1912,7 @@ const QuizProviders = (() => {
    */
   async function callProvider(providerKey, apiKey, model, prompt, images = [], extraConfig = {}) {
     // Règle 8.5 : assertions de préconditions
-    if (typeof providerKey !== 'string' || typeof apiKey !== 'string' || typeof model !== 'string' ||
+    if (typeof providerKey !== 'string' || typeof model !== 'string' ||
       (typeof prompt !== 'string' && (typeof prompt !== 'object' || !prompt || !prompt.user))) {
       throw new Error('Arguments obligatoires manquants ou invalides dans callProvider (providerKey, apiKey, model, prompt).');
     }
@@ -1709,21 +1922,36 @@ const QuizProviders = (() => {
 
     // Force lowercase for registry lookup but keep original for logging or error messages
     const normalizedKey = providerKey.toLowerCase();
-    const provider = PROVIDERS[normalizedKey];
+    const provider = _getProviderDef(normalizedKey);
     if (!provider) throw new Error(`Provider inconnu: ${providerKey}`);
+
+    const resolvedKey = (typeof apiKey === 'string' && apiKey.trim().length > 0)
+      ? apiKey
+      : (provider.local ? (provider.staticApiKey || 'local') : null);
+    if (typeof resolvedKey !== 'string') {
+      throw new Error('Arguments obligatoires manquants ou invalides dans callProvider (providerKey, apiKey, model, prompt).');
+    }
 
     const startedAt = Date.now();
     try {
       let result;
       switch (provider.type) {
         case 'openai-compatible':
-          result = await callOpenAICompatible(normalizedKey, apiKey, model, prompt, images, extraConfig);
+          result = await callOpenAICompatible(normalizedKey, resolvedKey, model, prompt, images, extraConfig);
           break;
         case 'claude':
-          result = await callClaudeProvider(apiKey, model, prompt, images, extraConfig.maxTokens, extraConfig.thinking, extraConfig);
+          result = await callClaudeProvider(
+            resolvedKey,
+            model,
+            prompt,
+            images,
+            extraConfig.maxTokens,
+            extraConfig.thinking,
+            { ...extraConfig, providerKey: normalizedKey }
+          );
           break;
         case 'gemini':
-          result = await callGeminiProvider(apiKey, model, prompt, images, extraConfig.maxTokens, extraConfig.thinking, extraConfig);
+          result = await callGeminiProvider(resolvedKey, model, prompt, images, extraConfig.maxTokens, extraConfig.thinking, extraConfig);
           break;
         default:
           throw new Error(`Type de provider inconnu: ${provider.type}`);
@@ -1793,31 +2021,46 @@ const QuizProviders = (() => {
       throw _ProviderNetUtils.createAbortError(signal.reason);
     }
 
-    const orderedProviders = priority || DEFAULT_PRIORITY;
+    const configView = (extraConfig && extraConfig.providerConfigs && !apiKeys?.providerConfigs)
+      ? { ...(apiKeys || {}), providerConfigs: extraConfig.providerConfigs }
+      : (apiKeys || {});
+    const fullFallbackOrder = [...DEFAULT_PRIORITY, ...Object.keys(PROVIDERS).filter(k => !DEFAULT_PRIORITY.includes(k))];
+    const explicitPriority = (Array.isArray(priority) && priority.length > 0)
+      ? priority.map(p => _normalizeProviderKey(p)).filter(Boolean)
+      : null;
+    const anyExplicitConfigured = explicitPriority
+      ? explicitPriority.some(k => isProviderConfigured(k, configView))
+      : false;
+    const orderedProviders = explicitPriority
+      ? (anyExplicitConfigured ? explicitPriority : [...new Set([...explicitPriority, ...fullFallbackOrder])])
+      : fullFallbackOrder;
     const hasImages = images.length > 0;
     const triedProviders = [];
 
     console.log(`🧠 Smart Router: ${hasImages ? '🖼️ Mode Vision' : '📝 Mode Texte'}, ${orderedProviders.length} providers disponibles`);
 
-    for (const providerKey of orderedProviders) {
+    for (const rawProviderKey of orderedProviders) {
       if (signal && signal.aborted) {
         throw _ProviderNetUtils.createAbortError(signal.reason);
       }
 
-      const provider = PROVIDERS[providerKey];
+      const providerKey = _normalizeProviderKey(rawProviderKey);
+      const provider = _getProviderDef(providerKey);
       if (!provider) continue;
 
-      const apiKey = apiKeys[provider.apiKeyField];
-      if (!apiKey) {
-        console.log(`   ⏭️ ${provider.name}: pas de clé API`);
+      if (!isProviderConfigured(providerKey, configView)) {
+        console.log(`   ⏭️ ${provider.name}: non configuré`);
         continue;
       }
 
+      const { apiKey, providerConfig } = resolveProviderRuntimeConfig(providerKey, configView);
+      const callExtraConfig = { ...extraConfig, providerConfig };
+
       const model = getModelForContext(providerKey, hasImages, modelOverrides);
-      console.log(`   🔄 Essai ${provider.icon} ${provider.name} → ${model}`);
+      console.log(`   🔄 Essai ${provider.icon ? provider.icon + ' ' : ''}${provider.name} → ${model}`);
 
       try {
-        const text = await callProvider(providerKey, apiKey, model, prompt, images, extraConfig);
+        const text = await callProvider(providerKey, apiKey, model, prompt, images, callExtraConfig);
         console.log(`   ✅ ${provider.name} a répondu avec succès!`);
         return { text, provider: providerKey, providerName: provider.name, model };
       } catch (error) {
@@ -1842,7 +2085,7 @@ const QuizProviders = (() => {
             }
             console.log(`     🔄 Essai modèle alternatif → ${altModel.id}`);
             try {
-              altText = await callProvider(providerKey, apiKey, altModel.id, prompt, images, extraConfig);
+              altText = await callProvider(providerKey, apiKey, altModel.id, prompt, images, callExtraConfig);
               console.log(`     ✅ Succès avec le modèle alternatif ${altModel.id}!`);
               successWithAlt = true;
               altModelUsed = altModel.id;
@@ -1861,7 +2104,7 @@ const QuizProviders = (() => {
         }
 
         triedProviders.push(provider.name);
-        const isForcedSelection = priority && priority.length > 0 && priority[0] === providerKey;
+        const isForcedSelection = Array.isArray(priority) && priority.length > 0 && _normalizeProviderKey(priority[0]) === providerKey;
 
         if (isQuotaError(error)) {
           console.warn(`   ⚠️ ${provider.name}: quota épuisé (tous les modèles ont échoué), passage au suivant...`);
@@ -1948,22 +2191,22 @@ const QuizProviders = (() => {
 
         const providersReady = [];
         for (const pKey of candidateKeys) {
-          const pDef = PROVIDERS[pKey];
-          if (!pDef) continue;
-          const keyVal = config[pDef.apiKeyField];
-          if (typeof keyVal === 'string' && keyVal.trim().length > 0) {
-            providersReady.push(pKey);
+          const normKey = _normalizeProviderKey(pKey);
+          if (!normKey || providersReady.includes(normKey)) continue;
+          if (isProviderConfigured(normKey, config)) {
+            providersReady.push(normKey);
           }
         }
 
         const warmTasks = providersReady.map(async (pKey) => {
-          const pDef = PROVIDERS[pKey];
-          const apiKey = config[pDef.apiKeyField];
+          const pDef = _getProviderDef(pKey);
+          if (!pDef) return;
+          const { apiKey, providerConfig } = resolveProviderRuntimeConfig(pKey, config);
           let cachedModels = null;
 
           if (typeof ModelRegistry !== 'undefined') {
             if (opts.syncModels === true && typeof ModelRegistry.syncProviderModels === 'function') {
-              await ModelRegistry.syncProviderModels(pKey, apiKey);
+              await ModelRegistry.syncProviderModels(pKey, apiKey, providerConfig);
             }
             if (typeof ModelRegistry.getCachedModels === 'function') {
               cachedModels = await ModelRegistry.getCachedModels(pKey);
@@ -2037,7 +2280,14 @@ const QuizProviders = (() => {
    * Get all API key storage field names from the provider registry.
    */
   function getAllApiKeyFields() {
-    return Object.values(PROVIDERS).map(p => p.apiKeyField);
+    return [...new Set(Object.values(PROVIDERS).map(p => p.apiKeyField).filter(Boolean))];
+  }
+
+  /**
+   * Get all chrome.storage.local keys required to evaluate and invoke all providers.
+   */
+  function getAllStorageKeys() {
+    return [...new Set([...getAllApiKeyFields(), 'providerConfigs', 'serpApiKey'])];
   }
 
   // Initialise le cache synchrone depuis les données PROVIDERS (données statiques vérifiées)
@@ -2050,6 +2300,9 @@ const QuizProviders = (() => {
   return {
     PROVIDERS,
     DEFAULT_PRIORITY,
+    isProviderConfigured,
+    resolveProviderRuntimeConfig,
+    resolveProviderBaseUrl,
     getModelForContext,
     getModelContextLimit,
     warmContextCache,
@@ -2059,6 +2312,7 @@ const QuizProviders = (() => {
     isQuotaError,
     buildOpenAIMessages,
     getAllApiKeyFields,
+    getAllStorageKeys,
     extensionFetch,
     preWarmProviders,
     getWarmupStatus,
@@ -2241,48 +2495,216 @@ const ModelRegistry = (() => {
     return null;
   }
 
+  function _staticProviderToCacheModels(staticProvider) {
+    if (!staticProvider) return [];
+    const seen = new Set();
+    const out = [];
+    const visionSet = new Set((staticProvider.visionModels || []).map(vm => vm.id));
+    for (const m of [...(staticProvider.textModels || []), ...(staticProvider.visionModels || [])]) {
+      if (!m || !m.id || seen.has(m.id)) continue;
+      seen.add(m.id);
+      const ctx = m.contextLimit || 128000;
+      out.push({
+        id: m.id,
+        label: m.label || m.id,
+        contextWindow: ctx,
+        maxOutputTokens: Math.min(ctx, 16384),
+        vision: visionSet.has(m.id),
+        free: Boolean(m.free)
+      });
+    }
+    return out;
+  }
+
+  function _inferModelVision(id, rawObj) {
+    if (rawObj?.capabilities?.vision === true || rawObj?.capabilities?.image_input === true) return true;
+    if (Array.isArray(rawObj?.input_modalities) && rawObj.input_modalities.includes('image')) return true;
+    if (Array.isArray(rawObj?.architecture?.input_modalities) && rawObj.architecture.input_modalities.includes('image')) return true;
+    return /vision|-vl\b|gpt-4o|gpt-4\.1|claude-|gemini-|grok-4|grok-2-vision/i.test(id);
+  }
+
+  function _extractOpenAIContextWindow(rawObj) {
+    const raw = Number(
+      rawObj?.context_length ||
+      rawObj?.context_window ||
+      rawObj?.max_model_len ||
+      rawObj?.max_input_tokens ||
+      rawObj?.input_token_limit
+    );
+    return Number.isFinite(raw) && raw > 0 ? raw : 128000;
+  }
+
   /**
-   * Découverte dynamique pour Claude (Anthropic).
+   * Découverte dynamique pour Claude (Anthropic) et passerelles compatibles Messages API.
    * L'API /v1/models retourne max_input_tokens et capabilities.
    * Nécessite l'en-tête anthropic-dangerous-direct-browser-access pour le contexte browser.
    * @param {string} apiKey
+   * @param {string} [providerKey='claude']
+   * @param {Object|null} [providerConfig=null]
    * @returns {Promise<Array|null>}
    */
-  async function _fetchClaudeModels(apiKey) {
+  async function _fetchClaudeModels(apiKey, providerKey = 'claude', providerConfig = null) {
+    const normKey = String(providerKey || 'claude').trim().toLowerCase();
+    const provider = QuizProviders.PROVIDERS[normKey] || QuizProviders.PROVIDERS.claude;
+    const baseUrl = (typeof QuizProviders.resolveProviderBaseUrl === 'function'
+      ? QuizProviders.resolveProviderBaseUrl(normKey, providerConfig)
+      : '') || 'https://api.anthropic.com/v1';
+    const modelsEndpoint = (_LoadedProviderCatalog && typeof _LoadedProviderCatalog.buildEndpointUrl === 'function')
+      ? _LoadedProviderCatalog.buildEndpointUrl(baseUrl, '/models')
+      : `${baseUrl.replace(/\/+$/, '')}/models`;
+
+    const headers = {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    };
+    if (provider && provider.sendBearerAuth === true && apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const resp = await QuizProviders.extensionFetch('https://api.anthropic.com/v1/models', {
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        signal: controller.signal
-      });
+      const fetchOpts = { headers, signal: controller.signal };
+      if (normKey !== 'claude') {
+        fetchOpts.retry = false;
+      }
+      const resp = await QuizProviders.extensionFetch(modelsEndpoint, fetchOpts);
       clearTimeout(timer);
       if (!resp.ok) {
-        console.warn(`⚠️ ModelRegistry Claude: HTTP ${resp.status}`);
+        console.warn(`⚠️ ModelRegistry [${normKey}]: HTTP ${resp.status}`);
         return null;
       }
       const data = await resp.json();
-      const items = Array.isArray(data.data) ? data.data : null;
+      const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : null);
       if (!items) return null;
       return items
-        .filter(m => m.id && m.max_input_tokens)
+        .filter(m => m && typeof m.id === 'string' && m.id.trim().length > 0 && (normKey !== 'claude' || m.max_input_tokens))
         .map(m => ({
           id: m.id,
-          label: m.display_name || m.id,
-          contextWindow: m.max_input_tokens,
-          maxOutputTokens: m.max_output_tokens || 8192,
-          // image_input est le flag de vision dans l'API Claude
-          vision: m.capabilities?.image_input === true,
+          label: m.display_name || m.name || m.id,
+          contextWindow: Number(m.max_input_tokens) || 200000,
+          maxOutputTokens: Number(m.max_output_tokens) || 8192,
+          vision: m.capabilities?.image_input === true || _inferModelVision(m.id, m),
           free: false
         }));
     } catch (e) {
       clearTimeout(timer);
       if (e.name !== 'AbortError') {
-        console.warn(`⚠️ ModelRegistry Claude: erreur fetch - ${e.message}`);
+        console.warn(`⚠️ ModelRegistry [${normKey}]: erreur fetch - ${e.message}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Découverte dynamique pour les fournisseurs OpenAI-compatibles (standard /models, xAI, Together,
+   * GitHub Models, Cloudflare AI search, locaux LM Studio / llama.cpp / Ollama).
+   * @returns {Promise<Array|null>}
+   */
+  async function _fetchOpenAICompatibleModels(providerKey, provider, apiKey, providerConfig = null) {
+    const listing = (provider && provider.modelListing && typeof provider.modelListing === 'object')
+      ? provider.modelListing
+      : {};
+
+    let modelsEndpoint = '';
+    try {
+      if (listing.cloudflareSearch && _LoadedProviderCatalog && typeof _LoadedProviderCatalog.resolveCloudflareModelSearchUrl === 'function') {
+        modelsEndpoint = _LoadedProviderCatalog.resolveCloudflareModelSearchUrl(provider, providerConfig);
+      } else if (typeof listing.absoluteUrl === 'string' && listing.absoluteUrl.trim()) {
+        modelsEndpoint = listing.absoluteUrl.trim();
+      } else {
+        const baseUrl = QuizProviders.resolveProviderBaseUrl(providerKey, providerConfig);
+        const listPath = typeof listing.path === 'string' && listing.path.trim() ? listing.path.trim() : '/models';
+        modelsEndpoint = (_LoadedProviderCatalog && typeof _LoadedProviderCatalog.buildEndpointUrl === 'function')
+          ? _LoadedProviderCatalog.buildEndpointUrl(baseUrl, listPath)
+          : `${baseUrl.replace(/\/+$/, '')}${listPath}`;
+      }
+    } catch (err) {
+      console.warn(`⚠️ ModelRegistry [${providerKey}]: URL invalide - ${err.message}`);
+      return null;
+    }
+
+    if (!modelsEndpoint) return null;
+
+    const headers = {
+      ...(provider && provider.defaultHeaders && typeof provider.defaultHeaders === 'object' ? provider.defaultHeaders : {}),
+      'Authorization': `Bearer ${apiKey}`
+    };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const resp = await QuizProviders.extensionFetch(modelsEndpoint, {
+        headers,
+        signal: controller.signal,
+        retry: false
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        console.warn(`⚠️ ModelRegistry [${providerKey}]: HTTP ${resp.status}`);
+        return null;
+      }
+      const data = await resp.json();
+
+      let items = null;
+      if (listing.githubCatalog) {
+        if (!Array.isArray(data)) return null;
+        const valid = data.filter(m => m && typeof m.id === 'string' && m.id.trim().length > 0);
+        const toolCapable = valid.filter(m => Array.isArray(m.capabilities) &&
+          m.capabilities.includes('streaming') && m.capabilities.includes('tool-calling'));
+        items = toolCapable.length > 0 ? toolCapable : valid;
+      } else if (listing.cloudflareSearch) {
+        items = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.result) ? data.result : null);
+      } else if (listing.collectionField === null) {
+        items = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : null);
+        if (Array.isArray(items) && Array.isArray(listing.fieldEquals) && listing.fieldEquals.length === 2) {
+          const [fieldName, expectedValue] = listing.fieldEquals;
+          items = items.filter(m => m && m[fieldName] === expectedValue);
+        }
+      } else if (typeof listing.collectionField === 'string' && listing.collectionField) {
+        items = Array.isArray(data?.[listing.collectionField]) ? data[listing.collectionField] : null;
+      } else {
+        items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : null);
+      }
+
+      if (!Array.isArray(items)) return null;
+
+      const seenIds = new Set();
+      const normalized = [];
+      const addEntry = (id, label, rawObj) => {
+        if (typeof id !== 'string') return;
+        const cleanId = id.trim();
+        if (!cleanId || seenIds.has(cleanId)) return;
+        seenIds.add(cleanId);
+        const contextWindow = _extractOpenAIContextWindow(rawObj);
+        normalized.push({
+          id: cleanId,
+          label: label || cleanId,
+          contextWindow,
+          maxOutputTokens: Number(rawObj?.max_output_tokens) || 8192,
+          vision: _inferModelVision(cleanId, rawObj),
+          free: Boolean(provider?.local)
+        });
+      };
+
+      for (const m of items) {
+        if (!m || typeof m.id !== 'string' || !m.id.trim()) continue;
+        addEntry(m.id, m.name || m.display_name || m.id, m);
+        if (typeof listing.aliasesField === 'string' && Array.isArray(m[listing.aliasesField])) {
+          for (const alias of m[listing.aliasesField]) {
+            if (typeof alias === 'string' && alias.trim()) {
+              addEntry(alias, alias.trim(), m);
+            }
+          }
+        }
+      }
+
+      return normalized;
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name !== 'AbortError') {
+        console.warn(`⚠️ ModelRegistry [${providerKey}]: erreur fetch - ${e.message}`);
       }
       return null;
     }
@@ -2290,69 +2712,71 @@ const ModelRegistry = (() => {
 
   /**
    * Synchronise les métadonnées d'un provider donné.
-   * Pour Gemini/Mistral/Claude : appel dynamique à l'API.
-   * Pour Groq/NVIDIA/Fireworks : utilisation des données statiques de PROVIDERS (déjà à jour).
    *
-   * Invariant : ne lève jamais d'exception — toujours retourne null en cas d'erreur.
-   * @param {string} providerKey - Clé du provider (ex: 'gemini', 'mistral', 'claude')
-   * @param {string} apiKey - Clé API du provider
-   * @returns {Promise<void>}
+   * Invariant : ne lève jamais d'exception — retourne null ou le cache en cas d'erreur.
+   * @param {string} providerKey - Clé du provider
+   * @param {string} [apiKey=''] - Clé API du provider (optionnelle pour les locaux)
+   * @param {Object|null} [providerConfig=null] - Configuration spécifique (baseUrl, accountId, enabled)
+   * @param {Object} [options={}] - Options ({ force: boolean })
+   * @returns {Promise<Array|null>}
    */
-  async function syncProviderModels(providerKey, apiKey) {
-    if (typeof providerKey !== 'string' || typeof apiKey !== 'string' || !apiKey) {
-      return;
+  async function syncProviderModels(providerKey, apiKey = '', providerConfig = null, options = {}) {
+    if (typeof providerKey !== 'string' || !providerKey.trim()) {
+      return null;
+    }
+    const normKey = providerKey.trim().toLowerCase();
+    const provider = QuizProviders.PROVIDERS[normKey];
+    if (!provider) {
+      console.warn(`⚠️ ModelRegistry: provider inconnu - ${providerKey}`);
+      return null;
+    }
+
+    const effectiveKey = (typeof apiKey === 'string' && apiKey.trim().length > 0)
+      ? apiKey.trim()
+      : (provider.local ? (provider.staticApiKey || 'local') : '');
+    if (!effectiveKey && !provider.local) {
+      return null;
+    }
+
+    if (provider.requiresAccountId && !(providerConfig && typeof providerConfig.accountId === 'string' && providerConfig.accountId.trim())) {
+      return null;
+    }
+    if (provider.requiresBaseUrl && !(providerConfig && typeof providerConfig.baseUrl === 'string' && providerConfig.baseUrl.trim())) {
+      return null;
     }
 
     const cache = await _loadCache();
+    const forceSync = Boolean(options && options.force === true);
 
-    // Si le cache est encore valide, on ne re-synchronise pas
-    if (_isCacheValid(cache, providerKey)) {
-      console.log(`✅ ModelRegistry [${providerKey}]: cache valide (< 24h), pas de resync.`);
-      return;
+    // Si le cache est encore valide, on ne re-synchronise pas (sauf force: true)
+    if (!forceSync && _isCacheValid(cache, normKey)) {
+      console.log(`✅ ModelRegistry [${normKey}]: cache valide (< 24h), pas de resync.`);
+      return cache[normKey].models;
     }
 
     let models = null;
 
-    switch (providerKey) {
-      case 'gemini':
-        models = await _fetchGeminiModels(apiKey);
-        break;
-      case 'mistral':
-        models = await _fetchMistralModels(apiKey);
-        break;
-      case 'claude':
-        models = await _fetchClaudeModels(apiKey);
-        break;
-      case 'groq':
-      case 'nvidia': {
-        // Ces providers n'exposent pas les métadonnées dans leur /models basique.
-        // On sérialise les données statiques de PROVIDERS dans le cache pour
-        // que getCachedModels() soit uniforme pour tous les providers.
-        const staticProvider = QuizProviders.PROVIDERS[providerKey];
-        if (staticProvider) {
-          const allModels = [
-            ...(staticProvider.textModels || []),
-            ...(staticProvider.visionModels || [])
-          ];
-          models = allModels.map(m => ({
-            id: m.id,
-            label: m.label,
-            contextWindow: m.contextLimit,
-            maxOutputTokens: Math.min(m.contextLimit, 16384),
-            vision: (staticProvider.visionModels || []).some(vm => vm.id === m.id),
-            free: m.free
-          }));
-        }
-        break;
+    if (normKey === 'gemini') {
+      models = await _fetchGeminiModels(effectiveKey);
+    } else if (normKey === 'mistral') {
+      models = await _fetchMistralModels(effectiveKey);
+    } else if (normKey === 'groq' || normKey === 'nvidia') {
+      models = _staticProviderToCacheModels(provider);
+    } else if (provider.type === 'claude') {
+      models = await _fetchClaudeModels(effectiveKey, normKey, providerConfig);
+      if ((!models || models.length === 0) && normKey === 'agentrouter') {
+        models = _staticProviderToCacheModels(provider);
       }
-      default:
-        console.warn(`⚠️ ModelRegistry: provider inconnu - ${providerKey}`);
-        return;
+    } else if (provider.type === 'openai-compatible') {
+      models = await _fetchOpenAICompatibleModels(normKey, provider, effectiveKey, providerConfig);
+    } else {
+      console.warn(`⚠️ ModelRegistry: type non supporté - ${provider.type}`);
+      return null;
     }
 
     if (!models || models.length === 0) {
-      console.warn(`⚠️ ModelRegistry [${providerKey}]: aucun modèle retourné, cache conservé.`);
-      return;
+      console.warn(`⚠️ ModelRegistry [${normKey}]: aucun modèle retourné, cache conservé.`);
+      return null;
     }
 
     // Limiter à 500 modèles max par provider pour éviter la saturation du cache Chrome.
@@ -2361,7 +2785,7 @@ const ModelRegistry = (() => {
     const slicedModels = models.slice(0, MAX_MODELS_PER_PROVIDER);
     const writeTask = _cacheWriteQueue.then(async () => {
       const latestCache = await _loadCache();
-      latestCache[providerKey] = {
+      latestCache[normKey] = {
         lastSync: Date.now(),
         models: slicedModels
       };
@@ -2370,8 +2794,9 @@ const ModelRegistry = (() => {
     _cacheWriteQueue = writeTask.catch(() => {});
     await writeTask;
     // DET-01 : Alimenter automatiquement le cache synchrone en mémoire
-    QuizProviders.warmContextCache(providerKey, slicedModels);
-    console.log(`✅ ModelRegistry [${providerKey}]: ${models.length} modèles synchronisés.`);
+    QuizProviders.warmContextCache(normKey, slicedModels);
+    console.log(`✅ ModelRegistry [${normKey}]: ${slicedModels.length} modèles synchronisés.`);
+    return slicedModels;
   }
 
   /**

@@ -447,12 +447,15 @@ RÈGLES CRITIQUES:
 
     // Load API config
     const syncConfig = await chrome.storage.sync.get(['providerOrder', 'customModels']);
-    const localConfig = await chrome.storage.local.get(
-      window.QuizProviders.getAllApiKeyFields()
-    );
+    const localKeys = (window.QuizProviders && typeof window.QuizProviders.getAllStorageKeys === 'function')
+      ? window.QuizProviders.getAllStorageKeys()
+      : window.QuizProviders.getAllApiKeyFields();
+    const localConfig = await chrome.storage.local.get(localKeys);
     Object.assign(syncConfig, localConfig);
 
-    const order = syncConfig.providerOrder || window.QuizProviders.DEFAULT_PRIORITY;
+    const order = (Array.isArray(syncConfig.providerOrder) && syncConfig.providerOrder.length > 0)
+      ? syncConfig.providerOrder
+      : null;
 
     try {
       // Pour une tâche de code complexe (sélecteurs CSS), on essaie de forcer 

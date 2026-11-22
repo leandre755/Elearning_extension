@@ -1,10 +1,15 @@
 // Service Worker - Background Script
-/* global ConfigCache, QuizProviders, ProviderAnalytics, handleFetchSerpApi, BackgroundAgent, chrome, Number, Array, Boolean, RegExp, encodeURIComponent, parseInt, globalThis */
+/* global ConfigCache, QuizProviders, ProviderCatalog, ProviderAnalytics, handleFetchSerpApi, BackgroundAgent, chrome, Number, Array, Boolean, RegExp, encodeURIComponent, parseInt, globalThis */
 
 // Charger les modules partagés dans le contexte du service worker
 if (typeof importScripts === 'function') {
-  importScripts('providers.js', 'background-agent.js');
+  importScripts('provider-catalog.js', 'providers.js', 'background-agent.js');
 } else if (typeof require === 'function' && typeof module !== 'undefined' && module.exports) {
+  if (typeof globalThis.ProviderCatalog === 'undefined') {
+    try {
+      require('./provider-catalog.js');
+    } catch (_) { /* ignore if unavailable in isolated test */ }
+  }
   if (typeof globalThis.QuizProviders === 'undefined' || typeof globalThis.ConfigCache === 'undefined') {
     try {
       require('./providers.js');
@@ -213,11 +218,12 @@ async function injectCoreScripts(tabId) {
       }
       
       const scripts = [
-        'providers.js', 
-        'schema-cache.js', 
-        'schema-detector.js', 
-        'dom-extractor.js', 
-        'highlight-manager.js', 
+        'provider-catalog.js',
+        'providers.js',
+        'schema-cache.js',
+        'schema-detector.js',
+        'dom-extractor.js',
+        'highlight-manager.js',
         'content.js'
       ];
       
@@ -277,15 +283,27 @@ async function analyzeCurrentQuiz(tab) {
 const SYNC_CONFIG_KEYS = [
   'captureImages', 'imageMinSize', 'imageQuality',
   'contextText', 'customQuestionSelector', 'customAnswerSelector',
-  'highlightColor', 'highlightIntensity', 'highlightDiscretion',
+  'highlightColor', 'highlightIntensity', 'highlightDiscretion', 'showConfidenceBadge',
   'providerOrder', 'customModels', 'agenticSearch', 'autoMode', 'enabled'
 ];
 
-const LOCAL_CONFIG_KEYS = [
-  'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
-  'mistralApiKey', 'claudeApiKey',
-  'serpApiKey', 'contextFiles'
-];
+function getLocalConfigKeys() {
+  const fallback = [
+    'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
+    'mistralApiKey', 'claudeApiKey',
+    'providerConfigs', 'serpApiKey', 'contextFiles'
+  ];
+  const qp = typeof QuizProviders !== 'undefined'
+    ? QuizProviders
+    : (typeof globalThis !== 'undefined' ? globalThis.QuizProviders : null);
+  if (qp && typeof qp.getAllStorageKeys === 'function') {
+    return [...new Set([...qp.getAllStorageKeys(), 'contextFiles'])];
+  }
+  if (qp && typeof qp.getAllApiKeyFields === 'function') {
+    return [...new Set([...qp.getAllApiKeyFields(), 'providerConfigs', 'serpApiKey', 'contextFiles'])];
+  }
+  return fallback;
+}
 
 let _lastPreWarmConfigSignature = null;
 
@@ -324,7 +342,8 @@ function sanitizeErrorMessage(rawError, config) {
     .replace(/(\bkey\s*=\s*)[^\s&,;}"'\\\]]+/gi, '$1***');
 
   if (config && typeof config === 'object') {
-    for (const field of LOCAL_CONFIG_KEYS) {
+    for (const field of getLocalConfigKeys()) {
+      if (field === 'contextFiles' || field === 'providerConfigs') continue;
       const val = config[field];
       if (typeof val === 'string' && val.trim().length >= 4 && cleaned.includes(val.trim())) {
         cleaned = cleaned.split(val.trim()).join('***');
@@ -351,12 +370,13 @@ async function resolveConfigForPreWarm(message) {
   let storageConfig = {};
   if (typeof chrome !== 'undefined' && chrome && chrome.storage) {
     try {
+      const localKeys = getLocalConfigKeys();
       const [syncData, localData] = await Promise.all([
         chrome.storage.sync && typeof chrome.storage.sync.get === 'function'
           ? Promise.resolve(chrome.storage.sync.get(SYNC_CONFIG_KEYS))
           : Promise.resolve({}),
         chrome.storage.local && typeof chrome.storage.local.get === 'function'
-          ? Promise.resolve(chrome.storage.local.get(LOCAL_CONFIG_KEYS))
+          ? Promise.resolve(chrome.storage.local.get(localKeys))
           : Promise.resolve({})
       ]);
       storageConfig = {
@@ -380,12 +400,22 @@ async function resolveConfigForPreWarm(message) {
 
 function computePreWarmSignature(config) {
   if (!config || typeof config !== 'object') return '';
-  const activeProviders = LOCAL_CONFIG_KEYS
-    .filter((k) => k !== 'contextFiles' && typeof config[k] === 'string' && config[k].trim().length > 0)
+  const activeProviders = getLocalConfigKeys()
+    .filter((k) => k !== 'contextFiles' && k !== 'providerConfigs' && typeof config[k] === 'string' && config[k].trim().length > 0)
     .sort()
     .join(',');
+  const pConfigs = config.providerConfigs && typeof config.providerConfigs === 'object'
+    ? Object.keys(config.providerConfigs)
+        .filter((k) => {
+          const c = config.providerConfigs[k];
+          return c && typeof c === 'object' && (c.enabled === true || (typeof c.baseUrl === 'string' && c.baseUrl.trim()) || (typeof c.accountId === 'string' && c.accountId.trim()));
+        })
+        .sort()
+        .map((k) => `${k}:${config.providerConfigs[k].enabled ? '1' : '0'}:${config.providerConfigs[k].baseUrl || ''}:${config.providerConfigs[k].accountId || ''}`)
+        .join(';')
+    : '';
   const order = Array.isArray(config.providerOrder) ? config.providerOrder.join(',') : '';
-  return `${activeProviders}|${order}`;
+  return `${activeProviders}|${pConfigs}|${order}`;
 }
 
 /**
@@ -668,7 +698,8 @@ function handleRuntimeMessage(message, sender, sendResponse) {
 
   // Boucle de Feedback Post-Soumission (Agent 3.0)
   if (message.action === 'submitQuizFeedback') {
-    BackgroundAgent.learnFromFeedback(message.feedbackData, message.config)
+    hydrateTrustedConfig(message.config)
+      .then(trustedConfig => BackgroundAgent.learnFromFeedback(message.feedbackData, trustedConfig))
       .then(result => sendResponse(result))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // Async response
@@ -691,7 +722,12 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect)
 
     port.onMessage.addListener((message) => {
       if (message.action === 'solveQuiz' || message.action === 'analyzeDelta') {
-        BackgroundAgent.solve(message.task)
+        (async () => {
+          const safeTask = (message.task && typeof message.task === 'object')
+            ? { ...message.task, config: await hydrateTrustedConfig(message.task.config) }
+            : message.task;
+          return BackgroundAgent.solve(safeTask);
+        })()
           .then(result => {
             try { port.postMessage(result); } catch (_) { /* port fermé côté content */ }
           })
@@ -714,14 +750,22 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect)
 /**
  * Allowed LLM API hosts — prevents the proxy from being used as an open relay.
  */
-const LLM_ALLOWED_HOSTS = [
-  'api.groq.com',
-  'generativelanguage.googleapis.com',
-  'integrate.api.nvidia.com',
-  'api.mistral.ai',
-  'codestral.mistral.ai',
-  'api.anthropic.com'
-];
+const LLM_ALLOWED_HOSTS = (() => {
+  const cat = typeof ProviderCatalog !== 'undefined'
+    ? ProviderCatalog
+    : (typeof globalThis !== 'undefined' ? globalThis.ProviderCatalog : null);
+  if (cat && Array.isArray(cat.LLM_STATIC_ALLOWED_HOSTS)) {
+    return [...cat.LLM_STATIC_ALLOWED_HOSTS];
+  }
+  return [
+    'api.groq.com',
+    'generativelanguage.googleapis.com',
+    'integrate.api.nvidia.com',
+    'api.mistral.ai',
+    'codestral.mistral.ai',
+    'api.anthropic.com'
+  ];
+})();
 
 /**
  * SEC-01 : Masquer les credentials dans les URLs de log.
@@ -830,9 +874,10 @@ function sniffRasterImageMime(bytes) {
  */
 async function handleFetchLLM(url, options) {
   try {
-    // S5 — Validate URL against allowlist
+    // S5 — Validate URL against static allowlist + storage-backed providerConfigs (Anti-SSRF)
     const parsedUrl = new URL(url);
-    if (!LLM_ALLOWED_HOSTS.includes(parsedUrl.hostname)) {
+    const providerConfigs = await getStoredProviderConfigs();
+    if (!isAllowedLLMUrl(parsedUrl, providerConfigs)) {
       console.warn(`⛔ URL bloquée par le proxy LLM: ${parsedUrl.hostname} (${sanitizeUrlForLog(url)})`);
       return { success: false, networkError: true, error: 'URL non autorisée pour le proxy LLM' };
     }
@@ -842,7 +887,19 @@ async function handleFetchLLM(url, options) {
     const timeoutId = setTimeout(() => controller.abort(), 120000);
 
     try {
-      const response = await fetch(url, { ...options, signal: controller.signal });
+      const fetchInit = {
+        method: (options && typeof options.method === 'string') ? options.method : 'GET',
+        signal: controller.signal,
+        redirect: 'error'
+      };
+      if (options && options.headers && typeof options.headers === 'object') {
+        fetchInit.headers = options.headers;
+      }
+      if (options && options.body !== undefined) {
+        fetchInit.body = options.body;
+      }
+
+      const response = await fetch(url, fetchInit);
       clearTimeout(timeoutId);
       const text = await response.text();
       
@@ -868,9 +925,141 @@ async function handleFetchLLM(url, options) {
       throw fetchError;
     }
   } catch (error) {
-    console.error("❌ fetchLLM network error:", error);
-    return { success: false, networkError: true, error: error.message };
+    const safeError = sanitizeErrorMessage(error);
+    console.error("❌ fetchLLM network error:", safeError);
+    return { success: false, networkError: true, error: safeError };
   }
+}
+
+function isLoopbackHostname(rawHostname) {
+  if (typeof rawHostname !== 'string' || !rawHostname) return false;
+  const h = rawHostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+}
+
+async function getStoredProviderConfigs() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local || typeof chrome.storage.local.get !== 'function') {
+    return {};
+  }
+  try {
+    const stored = await Promise.resolve(chrome.storage.local.get(['providerConfigs']));
+    return (stored && stored.providerConfigs && typeof stored.providerConfigs === 'object')
+      ? stored.providerConfigs
+      : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function hydrateTrustedConfig(rawConfig) {
+  const trustedProviderConfigs = await getStoredProviderConfigs();
+  const base = (rawConfig && typeof rawConfig === 'object') ? { ...rawConfig } : {};
+  const hasSyncObj = Boolean(base.syncConfig && typeof base.syncConfig === 'object');
+  const hasApiKeysObj = Boolean(base.apiKeys && typeof base.apiKeys === 'object');
+  delete base.providerConfigs;
+  if (hasSyncObj || hasApiKeysObj) {
+    base.syncConfig = { ...(hasSyncObj ? base.syncConfig : {}), providerConfigs: trustedProviderConfigs };
+    base.apiKeys = { ...(hasApiKeysObj ? base.apiKeys : {}), providerConfigs: trustedProviderConfigs };
+  } else {
+    base.providerConfigs = trustedProviderConfigs;
+  }
+  return base;
+}
+
+function isAllowedLLMUrl(parsedUrl, providerConfigs = {}) {
+  if (!parsedUrl || typeof parsedUrl !== 'object') return false;
+  if (parsedUrl.username || parsedUrl.password) return false;
+  const protocol = typeof parsedUrl.protocol === 'string' ? parsedUrl.protocol.toLowerCase() : '';
+  if (protocol !== 'https:' && protocol !== 'http:') return false;
+
+  const rawHost = typeof parsedUrl.hostname === 'string' ? parsedUrl.hostname : '';
+  const hostname = rawHost.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (!hostname) return false;
+
+  const port = typeof parsedUrl.port === 'string' ? parsedUrl.port : '';
+  const BEDROCK_MANTLE_RE = /^bedrock-mantle\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.api\.aws$/;
+  const AZURE_OPENAI_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.openai\.azure\.com$/;
+
+  if (protocol === 'https:' && (!port || port === '443') && (
+    LLM_ALLOWED_HOSTS.includes(hostname) ||
+    BEDROCK_MANTLE_RE.test(hostname) ||
+    AZURE_OPENAI_RE.test(hostname)
+  )) {
+    return true;
+  }
+
+  if (!providerConfigs || typeof providerConfigs !== 'object') {
+    return false;
+  }
+
+  const qp = typeof QuizProviders !== 'undefined'
+    ? QuizProviders
+    : (typeof globalThis !== 'undefined' ? globalThis.QuizProviders : null);
+  const cat = typeof ProviderCatalog !== 'undefined'
+    ? ProviderCatalog
+    : (typeof globalThis !== 'undefined' ? globalThis.ProviderCatalog : null);
+  const providersMap = (qp && qp.PROVIDERS) || (cat && cat.EXTRA_PROVIDERS) || {};
+
+  for (const pKey of Object.keys(providerConfigs)) {
+    if (!Object.prototype.hasOwnProperty.call(providerConfigs, pKey)) continue;
+    const normKey = String(pKey || '').trim().toLowerCase();
+    if (!normKey || !Object.prototype.hasOwnProperty.call(providersMap, normKey)) continue;
+
+    const provider = providersMap[normKey];
+    const cfg = providerConfigs[pKey];
+    if (!provider || !cfg || typeof cfg !== 'object') continue;
+
+    if (provider.local === true) {
+      if (cfg.enabled !== true) continue;
+      const candidateRaw = (typeof cfg.baseUrl === 'string' && cfg.baseUrl.trim())
+        ? cfg.baseUrl.trim()
+        : (provider.baseUrl || '');
+      if (!candidateRaw) continue;
+      let cfgUrl;
+      try {
+        cfgUrl = new URL(candidateRaw);
+      } catch (_) {
+        continue;
+      }
+      if (cfgUrl.username || cfgUrl.password) continue;
+      const cfgProto = cfgUrl.protocol.toLowerCase();
+      if ((cfgProto === 'http:' || cfgProto === 'https:') &&
+          isLoopbackHostname(cfgUrl.hostname) &&
+          cfgUrl.origin === parsedUrl.origin) {
+        return true;
+      }
+      continue;
+    }
+
+    const customRaw = typeof cfg.baseUrl === 'string' ? cfg.baseUrl.trim() : '';
+    if (!customRaw) continue;
+    if (!provider.supportsCustomBaseUrl && !provider.requiresBaseUrl) continue;
+
+    let cfgUrl;
+    try {
+      cfgUrl = new URL(customRaw);
+    } catch (_) {
+      continue;
+    }
+    if (cfgUrl.username || cfgUrl.password) continue;
+    const cfgProto = cfgUrl.protocol.toLowerCase();
+    if (provider.allowsLoopbackBaseUrl === true && isLoopbackHostname(cfgUrl.hostname)) {
+      if ((cfgProto === 'http:' || cfgProto === 'https:') && cfgUrl.origin === parsedUrl.origin) {
+        return true;
+      }
+      continue;
+    }
+
+    if (cfgProto === 'https:' &&
+        protocol === 'https:' &&
+        !isBlockedImageHost(cfgUrl.hostname) &&
+        !isBlockedImageHost(parsedUrl.hostname) &&
+        cfgUrl.origin === parsedUrl.origin) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function handleFetchSerpApi(query, apiKey) {
@@ -1024,10 +1213,9 @@ function showNotification(message) {
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalled) {
   chrome.runtime.onInstalled.addListener(async (details) => {
     // S1 — Migrate API keys from sync to local storage (security)
-    const API_KEY_FIELDS = [
-      'claudeApiKey', 'geminiApiKey', 'groqApiKey',
-      'nvidiaApiKey', 'mistralApiKey'
-    ];
+    const API_KEY_FIELDS = getLocalConfigKeys().filter(
+      (k) => k !== 'contextFiles' && k !== 'providerConfigs' && k !== 'serpApiKey'
+    );
 
     try {
       const syncData = await chrome.storage.sync.get(API_KEY_FIELDS);
@@ -1167,6 +1355,9 @@ if (typeof module !== 'undefined' && module.exports) {
     sanitizeErrorMessage,
     isPrivateIpv4,
     isBlockedImageHost,
+    isLoopbackHostname,
+    isAllowedLLMUrl,
+    LLM_ALLOWED_HOSTS,
     sniffRasterImageMime,
     handleTabRemoved,
     _injectionsInProgress,

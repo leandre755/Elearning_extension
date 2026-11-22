@@ -192,18 +192,30 @@ function showProgress(stepMessage, percent) {
   elements.progressPercentage.textContent = `${percent}%`;
 }
 
-// Vérifier la connexion API (combien de clés configurées)
+// Vérifier la connexion API (combien de fournisseurs configurés)
 async function checkApiConnection() {
   if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
-  const keys = await chrome.storage.local.get([
-    'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
-    'mistralApiKey', 'claudeApiKey'
-  ]);
+  const qp = (typeof window !== 'undefined' && window.QuizProviders)
+    ? window.QuizProviders
+    : (typeof QuizProviders !== 'undefined' ? QuizProviders : null);
+  const storageKeys = (qp && typeof qp.getAllStorageKeys === 'function')
+    ? qp.getAllStorageKeys()
+    : ['groqApiKey', 'geminiApiKey', 'nvidiaApiKey', 'mistralApiKey', 'claudeApiKey', 'providerConfigs'];
+  const stored = await chrome.storage.local.get(storageKeys);
 
   let configuredProviders = 0;
-  for (const key in keys) {
-    if (keys[key] && keys[key].trim().length > 0) {
-      configuredProviders++;
+  if (qp && qp.PROVIDERS && typeof qp.isProviderConfigured === 'function') {
+    for (const pKey of Object.keys(qp.PROVIDERS)) {
+      if (qp.isProviderConfigured(pKey, stored)) {
+        configuredProviders++;
+      }
+    }
+  } else {
+    for (const key in stored) {
+      if (key === 'providerConfigs') continue;
+      if (typeof stored[key] === 'string' && stored[key].trim().length > 0) {
+        configuredProviders++;
+      }
     }
   }
 
@@ -261,9 +273,17 @@ function normalizeProviderMetrics(providerKey, rawBucket) {
     estimatedCostUsd = Number((requests * unitCost).toFixed(4));
   }
 
+  const normalizedKey = String(providerKey || '').toLowerCase();
+  const qp = (typeof window !== 'undefined' && window.QuizProviders)
+    ? window.QuizProviders
+    : (typeof QuizProviders !== 'undefined' ? QuizProviders : null);
+  const registryName = (qp && qp.PROVIDERS && Object.prototype.hasOwnProperty.call(qp.PROVIDERS, normalizedKey))
+    ? qp.PROVIDERS[normalizedKey]?.name
+    : null;
+
   return {
     provider: providerKey,
-    displayName: PROVIDER_DISPLAY_NAMES[String(providerKey || '').toLowerCase()] || String(providerKey || 'unknown'),
+    displayName: PROVIDER_DISPLAY_NAMES[normalizedKey] || registryName || String(providerKey || 'unknown'),
     requests,
     successRate,
     avgLatencyMs,
@@ -464,7 +484,7 @@ async function analyzeQuiz() {
       console.log('Script non détecté, injection en cours...');
       showProgress('Chargement…', 15);
 
-      for (const file of ['providers.js', 'schema-cache.js', 'schema-detector.js', 'dom-extractor.js', 'highlight-manager.js', 'content.js']) {
+      for (const file of ['provider-catalog.js', 'providers.js', 'schema-cache.js', 'schema-detector.js', 'dom-extractor.js', 'highlight-manager.js', 'content.js']) {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           files: [file]
