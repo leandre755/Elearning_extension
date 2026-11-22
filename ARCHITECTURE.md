@@ -30,9 +30,11 @@ background.js (Service Worker MV3)
 | `background-agent.js` | Agent autonome ReAct + adaptateurs tool-calling multi-provider (`_planStrategy`, `_executeReActLoop`, `_validateAndRetry`, mémoire) | Service worker |
 | `schema-cache.js` | Cache persistant des schémas DOM découverts par domaine (`chrome.storage.local`) | Content script |
 | `schema-detector.js` | Analyse DOM par LLM pour inférer la structure d'un quiz inconnu | Content script |
-| `dom-extractor.js` | Extraction sémantique des questions/options et capture d'images | Content script |
-| `highlight-manager.js` | Surlignage furtif (métadonnées en `WeakMap`, `_styleTagId` aléatoire par session, suspension des observers pour l'Auto-Heal, fallback `document.head`) | Content script |
-| `content.js` | Orchestrateur côté page + parseur multi-stratégies de réponses XML `<quiz_answers>` | Content script |
+| `dom-extractor.js` | Extraction sémantique des questions/options (Shadow DOM récursif, 6 formats universels), capture d'images et handshake `CustomEvent` avec `page-bridge.js` | Content script |
+| `page-bridge.js` | Pont `MAIN` world injecté uniquement à la demande (`injectPageBridge`) : introspection défensive React/Vue et intercepteur réseau Fetch/XHR opt-in sans empreinte globale | Page `MAIN` world (on-demand) |
+| `nlp-cleaner.js` | Pipeline de normalisation typographique, dé-duplication d'en-têtes/pieds de page et extraction multi-format (`.txt`, `.md`, `.html`, `.csv`) | Options extension |
+| `highlight-manager.js` | Surlignage furtif et badges de confiance (métadonnées en `WeakMap`, `_styleTagId` aléatoire par session, support Shadow DOM, suspension des observers pour l'Auto-Heal, fallback `document.head`) | Content script |
+| `content.js` | Orchestrateur côté page, pré-chauffage `preWarmProviders`, auto-submit opt-in (`F-AUTO-03`) + parseur multi-stratégies de réponses XML `<quiz_answers>` | Content script |
 | `content.css` | Styles injectés de base | Content script |
 | `system.md` | Prompt système détaché + few-shots XML (servi uniquement via message au service worker) | Ressource interne |
 | `popup.html` / `popup.js` / `popup.css` | Interface rapide (bouton d'analyse, barre de progression, état fournisseurs/erreurs) | Popup extension |
