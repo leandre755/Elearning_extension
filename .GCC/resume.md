@@ -1,30 +1,24 @@
 # Session Handoff
 
 ## 🎯 Functional Outcome & Task Reality
-- **Requested Task**: Déplacer les sections « Clés API » (fournisseurs) et « Ordre des fournisseurs » dans un 4e onglet dédié dans la page des paramètres (`01 Général`, `02 Fournisseurs`, `03 Avancé`, `04 Expert`).
+- **Requested Task**: (1) Déplacer « Clés API » et « Ordre des fournisseurs » dans un 4e onglet dédié (`02 Fournisseurs`) ; (2) Ajouter un paramètre permettant de désactiver l'affichage du badge de pourcentage de confiance (`showConfidenceBadge`).
 - **Functional Status**: SUCCESS
 - **Behavioral Proof**:
-  - Navigation et rendu vérifiés dans Chrome headless (Playwright, `1024x900`, modes papier clair et ardoise sombre) : 4 onglets sans débordement (`TABS_OVERFLOW_1024: False`), `#tab-providers` affiche bien `Clés API` (5 fournisseurs) et `Ordre des fournisseurs` (5 éléments drag-and-drop), aucun doublon dans `Général` ou `Avancé`.
-  - Audit indépendant `antibug-reviewer` (`c6027b5a`) sur le diff stagé : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
-  - Commit local `67deb62` validé par `.githooks/pre-commit` (7/7) et `.githooks/commit-msg`.
-  - `node --test --test-concurrency=1 tests/*.test.js` : `117/117` pass ; `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit` : `7/7` pass.
+  - `67deb62` (4 onglets dans `settings.html`) : Playwright Chrome `1024×900` clair/sombre (`TABS_OVERFLOW_1024: False`), `117/117` tests `node:test`, Quality Gate `full` `7/7`, `antibug-reviewer` (`c6027b5a`) `AUDIT PASSED`.
+  - `365b248` (`showConfidenceBadge`) : Playwright Chrome (`SAVED_VALUE: False`, `PLAYWRIGHT_BADGE_TOGGLE_OK` + inspection visuelle), `tests/ui-integration.test.js` (`7/7`) + `tests/e2e-regressions.test.js` (`16/16`), Quality Gate `full` `7/7`, `antibug-reviewer` (`1f4ecaaa`) `AUDIT PASSED`.
 
 ## ⚡ Technical Diffs / Atomic Modifications
-- **Files (commit `67deb62`)**: `settings.html` (`1 file changed, 81 insertions(+), 74 deletions(-)`).
-- **Exact Technical Change**:
-  - Ajout du bouton d'onglet `#btn-providers` (`02 Fournisseurs`, `aria-controls="tab-providers"`) et décalage de `03 Avancé` / `04 Expert`.
-  - Création du panneau `#tab-providers` (`role="tabpanel"`, `aria-labelledby="btn-providers"`) regroupant `03 // FOURNISSEURS` (« Clés API ») et `04 // ROUTAGE` (« Ordre des fournisseurs »).
-  - Renumérotation continue des kickers : `01 // MARQUAGE` (Discrétion), `02 // CONTEXTE` (Notes de cours), `03 // FOURNISSEURS` (Clés API), `04 // ROUTAGE` (Ordre des fournisseurs), `05`..`14` inchangés.
-  - Aucune modification requise dans `settings.js` (câblage générique `.tab-btn`/`aria-controls`) ni `settings.css`.
+- **Commit `67deb62`**: `settings.html` — 4 onglets (`01 Général`, `02 Fournisseurs`, `03 Avancé`, `04 Expert`), panneau `#tab-providers` regroupant `Clés API` et `Ordre des fournisseurs`.
+- **Commit `365b248`**: `providers.js`, `highlight-manager.js`, `content.js`, `settings.html`, `settings.css`, `settings.js`, `tests/ui-integration.test.js` — case à cocher `#showConfidenceBadge` (cochée par défaut) dans `01 // MARQUAGE` (Discrétion), persistée dans `chrome.storage.sync` et `ConfigCache.SYNC_KEYS`, propagée par `content.js` à `HighlightManager.applyHighlights` et contrôlée par `resolveShowConfidenceBadge()` dans `createConfidenceBadge()`.
 
 ## 🛠️ Static Codebase Health
 - **Verification Commands Run**:
-  - `node --test --test-concurrency=1 tests/*.test.js` → `tests 117, pass 117, fail 0`
+  - `node --test tests/ui-integration.test.js && node --test tests/e2e-regressions.test.js` → `7/7` + `16/16` PASS
   - `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit` → `7/7 ✅`
-  - Playwright + `/bin/google-chrome` sur `settings.html` → `PLAYWRIGHT_ALL_OK` + inspection visuelle des captures clair/sombre.
+  - Playwright + `/bin/google-chrome` → `PLAYWRIGHT_ALL_OK`, `PLAYWRIGHT_BADGE_TOGGLE_OK`
 
 ## 🚧 Unfinished Work & Technical Failures
-- **Blocker / Failure Explanation**: Aucun blocage. En attente d'approbation humaine : (1) `git push origin master` (`67deb62` en avance sur `origin/master`) ; (2) autorisation éventuelle `ALLOW_CONFIG_EDIT=1` pour ajouter `--test-concurrency=1` dans `.githooks/_common/run-tests.sh` ; (3) confirmation écrite d'archivage de `plan_swarm_core_sprint.md`.
+- **Blocker / Failure Explanation**: Aucun blocage. En attente d'approbation humaine : (1) `git push origin master` (`365b248`..HEAD en avance sur `origin/master`) ; (2) autorisation éventuelle `ALLOW_CONFIG_EDIT=1` pour ajouter `--test-concurrency=1` dans `.githooks/_common/run-tests.sh` ; (3) confirmation écrite d'archivage de `plan_swarm_core_sprint.md`.
 
 ## 👉 Handover Directives for the Next Agent
 1. **Target File**: `.githooks/_common/run-tests.sh` (si approuvé), `Docs/task_tracking.md` et `.GCC/main.md`.

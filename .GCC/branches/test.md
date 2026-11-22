@@ -191,3 +191,14 @@
   - Vérification navigateur réel (Playwright + `/bin/google-chrome`, viewport `1024x900`, thèmes clair et sombre) : 4 onglets (`01 Général`, `02 Fournisseurs`, `03 Avancé`, `04 Expert`), `#tab-essential` = `['Discrétion', 'Notes de cours']`, `#tab-providers` = `['Clés API', 'Ordre des fournisseurs']` (`5` cartes clés + `5` lignes `#priorityList`), `#tab-advanced` commence par `Recherche web` (sans doublon d'ordre), `#tab-expert` inchangé, `TABS_OVERFLOW_1024: False`.
   - Revue indépendante `antibug-reviewer` (`c6027b5a`) sur le diff stagé : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
 -[Antigravity-app, Gemini 4 Neon, medium]
+
+### Run: Option `showConfidenceBadge` (masquage du pourcentage de confiance) + Playwright Chrome & ANTIBUG
+- **Date**: 2026-11-22
+- **Target**: `providers.js`, `highlight-manager.js`, `content.js`, `settings.html`, `settings.css`, `settings.js`, `tests/ui-integration.test.js` (commit `365b248`)
+- **Status**: PASS
+- **Output / Evidence**:
+  - `node --test tests/ui-integration.test.js` (`7/7` PASS, incluant `showConfidenceBadge: false` via `options` et `ConfigCache`, `showConfidenceBadge: true`, et vérification de câblage `settings.html`/`providers.js`) + `node --test tests/e2e-regressions.test.js` (`16/16` PASS).
+  - `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit` → `7/7 ✅`.
+  - Playwright + `/bin/google-chrome` sur `settings.html` : `#showConfidenceBadge` visible et coché par défaut dans `01 // MARQUAGE`, sauvegarde `showConfidenceBadge: false`, rechargement `loadSettings()` rétablit l'état décoché (`PLAYWRIGHT_BADGE_TOGGLE_OK`).
+  - Revue indépendante `antibug-reviewer` (`1f4ecaaa`) sur le diff stagé : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+-[Antigravity-app, Gemini 4 Neon, medium]
