@@ -106,7 +106,7 @@ if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onComman
       case 'analyze-quiz': {
         const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
         if (!settings.enabled) {
-          showNotification('Activez d\'abord l\'extension (Alt+Q)');
+          showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
           return;
         }
         const analyzeSuccess = await broadcastToActiveTabs({
@@ -253,7 +253,7 @@ async function analyzeCurrentQuiz(tab) {
 
   const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
   if (!settings.enabled) {
-    showNotification('Activez d\'abord l\'extension (Alt+Q)');
+    showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
     return;
   }
 
@@ -1012,7 +1012,7 @@ function showNotification(message) {
   chrome.notifications.create({
     type: 'basic',
     iconUrl: 'icons/icon48.png',
-    title: 'Quiz Helper AI',
+    title: 'Safe Exm',
     message: message
   });
 }
@@ -1071,7 +1071,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalle
       // Parent root menu
       chrome.contextMenus.create({
         id: "safe-exm-root",
-        title: "🧠 Quiz Helper AI",
+        title: "Safe Exm",
         contexts: ["all"]
       });
 
@@ -1079,35 +1079,35 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalle
       chrome.contextMenus.create({
         id: "cm-analyze-quiz",
         parentId: "safe-exm-root",
-        title: "🔍 Analyser le Quiz",
+        title: "Analyser le quiz",
         contexts: ["all"]
       });
 
       chrome.contextMenus.create({
         id: "cm-toggle-extension",
         parentId: "safe-exm-root",
-        title: "🔛 Activer/Désactiver l'extension",
+        title: "Activer / couper l'extension",
         contexts: ["all"]
       });
 
       chrome.contextMenus.create({
         id: "cm-toggle-auto-mode",
         parentId: "safe-exm-root",
-        title: "⚡ Activer/Désactiver le Mode Auto",
+        title: "Activer / couper le mode auto",
         contexts: ["all"]
       });
-      
+
       chrome.contextMenus.create({
         id: "cm-clear-highlights",
         parentId: "safe-exm-root",
-        title: "🧹 Effacer les surlignages",
+        title: "Effacer les marques",
         contexts: ["all"]
       });
 
       chrome.contextMenus.create({
         id: "cm-paste-answer",
         parentId: "safe-exm-root",
-        title: "📋 Coller la réponse",
+        title: "Coller la réponse",
         contexts: ["all"]
       });
     } catch (e) {

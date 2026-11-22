@@ -32,7 +32,8 @@ const elements = {
   providerStatsSection: typeof document !== 'undefined' ? document.getElementById('providerStatsSection') : null,
   providerStatsList: typeof document !== 'undefined' ? document.getElementById('providerStatsList') : null,
   providerStatsEmpty: typeof document !== 'undefined' ? document.getElementById('providerStatsEmpty') : null,
-  resetStatsBtn: typeof document !== 'undefined' ? document.getElementById('resetStatsBtn') : null
+  resetStatsBtn: typeof document !== 'undefined' ? document.getElementById('resetStatsBtn') : null,
+  themeToggleBtn: typeof document !== 'undefined' ? document.getElementById('themeToggleBtn') : null
 };
 
 const PROVIDER_DISPLAY_NAMES = Object.freeze({
@@ -51,9 +52,31 @@ const PROVIDER_ESTIMATED_COST_PER_REQ = Object.freeze({
   claude: 0.0015
 });
 
+function applyTheme(theme) {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  const resolved = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', resolved);
+}
+
+async function initTheme() {
+  let theme = 'light';
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    try {
+      const data = await chrome.storage.local.get(['uiTheme']);
+      if (data && (data.uiTheme === 'dark' || data.uiTheme === 'light')) {
+        theme = data.uiTheme;
+      } else if (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        theme = 'dark';
+      }
+    } catch { /* keep default */ }
+  }
+  applyTheme(theme);
+}
+
 // Initialisation
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('DOMContentLoaded', async () => {
+    await initTheme();
     await loadSettings();
     setupEventListeners();
     checkApiConnection();
@@ -122,6 +145,18 @@ function setupEventListeners() {
     });
   }
 
+  // Bascule thème Papier / Ardoise
+  if (elements.themeToggleBtn) {
+    elements.themeToggleBtn.addEventListener('click', async () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        await chrome.storage.local.set({ uiTheme: next });
+      }
+    });
+  }
+
   // Écouter les messages de progression depuis content.js
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
@@ -149,7 +184,7 @@ function showProgress(stepMessage, percent) {
 
   // Réinitialiser les couleurs d'erreur s'il y en avait
   elements.progressText.style.color = '';
-  elements.progressBarFill.style.backgroundColor = '';
+  elements.progressBarFill.style.background = '';
 
   elements.progressSection.style.display = 'flex';
   elements.progressText.textContent = stepMessage;
@@ -175,12 +210,12 @@ async function checkApiConnection() {
   if (configuredProviders > 0) {
     if (elements.statusDot) elements.statusDot.classList.add('connected');
     if (elements.connectionStatus) {
-      elements.connectionStatus.textContent = `${configuredProviders} IA prête${configuredProviders > 1 ? 's' : ''}`;
+      elements.connectionStatus.textContent = `${configuredProviders} clé${configuredProviders > 1 ? 's' : ''}`;
     }
   } else {
     if (elements.statusDot) elements.statusDot.classList.remove('connected');
     if (elements.connectionStatus) {
-      elements.connectionStatus.textContent = 'Configuration requise';
+      elements.connectionStatus.textContent = 'Aucune clé';
     }
   }
 }
@@ -298,7 +333,7 @@ function renderProviderStats(rawStats, targetContainer = null) {
     const emptyEl = document.createElement('p');
     emptyEl.className = 'stats-empty';
     emptyEl.id = 'providerStatsEmpty';
-    emptyEl.textContent = 'Aucune requête enregistrée';
+    emptyEl.textContent = 'Aucune requête pour l\'instant';
     container.appendChild(emptyEl);
     return [];
   }
@@ -387,15 +422,27 @@ async function resetProviderStats(targetContainer = null) {
   return true;
 }
 
+function setAnalyzeButtonLabel(label) {
+  if (!elements.analyzeBtn) return;
+  const textEl = typeof elements.analyzeBtn.querySelector === 'function'
+    ? elements.analyzeBtn.querySelector('.btn-text')
+    : null;
+  if (textEl) {
+    textEl.textContent = label;
+  } else {
+    elements.analyzeBtn.textContent = label;
+  }
+}
+
 // Analyser le quiz
 async function analyzeQuiz() {
   state.hasError = false;
-  if (elements.progressSection) elements.progressSection.style.display = 'block';
+  if (elements.progressSection) elements.progressSection.style.display = 'flex';
   if (elements.analyzeBtn) {
     elements.analyzeBtn.disabled = true;
-    elements.analyzeBtn.textContent = '⏳ Analyse en cours...';
+    setAnalyzeButtonLabel('Analyse en cours…');
   }
-  showProgress('Initialisation de la page...', 5);
+  showProgress('Préparation…', 5);
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -414,8 +461,8 @@ async function analyzeQuiz() {
       if (!err || !err.isMissingReceiver) {
         throw err;
       }
-      console.log('⚠️ Script non détecté, injection en cours...');
-      showProgress('Injection du script cœur...', 15);
+      console.log('Script non détecté, injection en cours...');
+      showProgress('Chargement…', 15);
 
       for (const file of ['providers.js', 'schema-cache.js', 'schema-detector.js', 'dom-extractor.js', 'highlight-manager.js', 'content.js']) {
         await chrome.scripting.executeScript({
@@ -425,7 +472,7 @@ async function analyzeQuiz() {
       }
 
       await new Promise(resolve => setTimeout(resolve, 500));
-      showProgress('Lancement de l\'analyse...', 25);
+      showProgress('Lecture du quiz…', 25);
 
       await sendMessageToTab(tab.id, {
         action: 'analyzeQuiz',
@@ -439,7 +486,7 @@ async function analyzeQuiz() {
   } finally {
     if (elements.analyzeBtn) {
       elements.analyzeBtn.disabled = false;
-      elements.analyzeBtn.textContent = '🔍 Trouver les Réponses';
+      setAnalyzeButtonLabel('Analyser la page');
     }
 
     await loadProviderStats();
@@ -480,17 +527,17 @@ function sendMessageToTab(tabId, message) {
 function showResults(data) {
   const qCount = data.questionsFound;
   const aCount = data.answersHighlighted;
-  showProgress(`✅ Surligné ${aCount}/${qCount} réponse${qCount > 1 ? 's' : ''}`, 100);
+  showProgress(`${aCount}/${qCount} réponse${qCount > 1 ? 's' : ''} trouvée${qCount > 1 ? 's' : ''}`, 100);
 }
 
 // Afficher une erreur dans la barre
 function showError(message) {
   if (elements.progressText) {
-    elements.progressText.textContent = `❌ Erreur: ${message}`;
-    elements.progressText.style.color = '#E85D75';
+    elements.progressText.textContent = `Erreur : ${message}`;
+    elements.progressText.style.color = 'var(--error-color)';
   }
   if (elements.progressBarFill) {
-    elements.progressBarFill.style.backgroundColor = '#E85D75';
+    elements.progressBarFill.style.background = 'var(--error-color)';
     elements.progressBarFill.style.width = '100%';
   }
 }
@@ -543,17 +590,17 @@ async function checkSchemaStatus() {
 
     if (data.hasSchema) {
       elements.schemaStatus.className = 'schema-status known';
-      elements.schemaIcon.textContent = '🧠';
-      const platformText = data.platform ? ` (${data.platform})` : '';
-      elements.schemaText.textContent = `Structure reconnue${platformText}`;
+      if (elements.schemaIcon) elements.schemaIcon.textContent = '';
+      const platformText = data.platform ? ` · ${data.platform}` : '';
+      elements.schemaText.textContent = `Site reconnu${platformText}`;
     } else if (data.hasInteractive) {
       elements.schemaStatus.className = 'schema-status unknown';
-      elements.schemaIcon.textContent = '🔍';
-      elements.schemaText.textContent = 'Nouveau site — Analyse au premier clic';
+      if (elements.schemaIcon) elements.schemaIcon.textContent = '';
+      elements.schemaText.textContent = 'Nouveau site · détecté au lancement';
     } else {
       elements.schemaStatus.className = 'schema-status';
-      elements.schemaIcon.textContent = 'ℹ️';
-      elements.schemaText.textContent = 'Aucun questionnaire détecté';
+      if (elements.schemaIcon) elements.schemaIcon.textContent = '';
+      elements.schemaText.textContent = 'Aucun quiz détecté';
       if (elements.schemaRediscoverBtn) {
         elements.schemaRediscoverBtn.style.display = 'none';
       }
@@ -568,8 +615,8 @@ async function rediscoverSchema() {
   if (!elements.schemaRediscoverBtn) return;
 
   elements.schemaRediscoverBtn.disabled = true;
-  elements.schemaRediscoverBtn.textContent = '⏳';
-  elements.schemaText.textContent = 'Analyse de la structure...';
+  elements.schemaRediscoverBtn.textContent = '…';
+  elements.schemaText.textContent = 'Détection en cours…';
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -587,20 +634,20 @@ async function rediscoverSchema() {
 
     if (response && response.success) {
       elements.schemaStatus.className = 'schema-status known';
-      elements.schemaIcon.textContent = '🧠';
+      if (elements.schemaIcon) elements.schemaIcon.textContent = '';
       const d = response.data || response.schema || {};
-      elements.schemaText.textContent = `Structure apprise (${d.platform || 'Inconnue'})`;
+      elements.schemaText.textContent = `Site mémorisé · ${d.platform || 'inconnu'}`;
     } else {
       elements.schemaStatus.className = 'schema-status unknown';
-      elements.schemaIcon.textContent = '❌';
-      elements.schemaText.textContent = response?.error || 'Échec de l\'analyse';
+      if (elements.schemaIcon) elements.schemaIcon.textContent = '';
+      elements.schemaText.textContent = response?.error || 'Échec de la détection';
     }
   } catch (e) {
-    elements.schemaIcon.textContent = '❌';
-    elements.schemaText.textContent = 'Erreur: ' + e.message;
+    if (elements.schemaIcon) elements.schemaIcon.textContent = '';
+    elements.schemaText.textContent = 'Erreur : ' + e.message;
   } finally {
     elements.schemaRediscoverBtn.disabled = false;
-    elements.schemaRediscoverBtn.textContent = '🔄';
+    elements.schemaRediscoverBtn.textContent = '↺';
   }
 }
 

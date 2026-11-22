@@ -59,7 +59,8 @@ const elements = {
   autoSubmitDelayMs: document.getElementById('autoSubmitDelayMs'),
   autoSubmitDelayMsDisplay: document.getElementById('autoSubmitDelayMsDisplay'),
   autoSubmitOptionsGroup: document.getElementById('autoSubmitOptionsGroup'),
-  passiveNetworkIntercept: document.getElementById('passiveNetworkIntercept')
+  passiveNetworkIntercept: document.getElementById('passiveNetworkIntercept'),
+  themeToggleBtn: document.getElementById('themeToggleBtn')
 };
 
 const ALLOWED_DOMAIN_PRESETS = new Set(['auto', 'general', 'law', 'medicine', 'cs', 'math']);
@@ -92,46 +93,46 @@ let customModels = {};
 // Descriptions des modes de discrétion
 const discretionDescriptions = {
   1: {
-    title: '🕵️ Ultra-Furtif (Invisible)',
-    desc: 'Aucun contour, pas de clignotement. Seul un changement de fond extrêmement subtil de +4% d\'opacité signale la réponse. Indétectable par les proctors.',
+    title: 'Ultra-discret',
+    desc: 'Pas de bordure, juste un très léger voile de fond (+4 %).',
     style: (previewEl, color) => {
       previewEl.style.outline = 'none';
       previewEl.style.borderLeft = 'none';
       previewEl.style.boxShadow = 'none';
-      previewEl.style.backgroundColor = 'rgba(77, 168, 218, 0.04)';
+      previewEl.style.backgroundColor = 'rgba(59, 130, 246, 0.05)';
       previewEl.style.animation = 'none';
     }
   },
   2: {
-    title: '🤫 Furtif (Recommandé)',
-    desc: 'Une fine bordure gauche bleu calme de 3px, sans aucune animation ni effet clignotant. Idéal pour un usage discret.',
+    title: 'Discret (recommandé)',
+    desc: 'Fine barre latérale de 3 px, sans animation.',
     style: (previewEl, color) => {
       previewEl.style.outline = 'none';
       previewEl.style.borderLeft = `3px solid ${color}`;
       previewEl.style.boxShadow = 'none';
-      previewEl.style.backgroundColor = 'rgba(77, 168, 218, 0.02)';
+      previewEl.style.backgroundColor = 'rgba(59, 130, 246, 0.03)';
       previewEl.style.animation = 'none';
     }
   },
   3: {
-    title: '👁️ Visible (Marquage Net)',
-    desc: 'Un contour bleu calme complet de 1.5px autour de l\'option de réponse. Pas d\'animation.',
+    title: 'Visible',
+    desc: 'Contour fin de 1,5 px autour de la réponse, fixe.',
     style: (previewEl, color) => {
       previewEl.style.outline = `1.5px solid ${color}`;
       previewEl.style.borderLeft = 'none';
       previewEl.style.boxShadow = 'none';
-      previewEl.style.backgroundColor = 'rgba(77, 168, 218, 0.02)';
+      previewEl.style.backgroundColor = 'rgba(59, 130, 246, 0.03)';
       previewEl.style.animation = 'none';
     }
   },
   4: {
-    title: '🔥 Glow (Mode Privé)',
-    desc: 'Le contour d\'origine pulsant avec l\'ombre portée lumineuse cyan/violette. À utiliser en privé sans surveillance.',
+    title: 'Lumineux',
+    desc: 'Contour épais avec halo lumineux. À réserver hors surveillance.',
     style: (previewEl, color) => {
       previewEl.style.outline = `3px solid ${color}`;
       previewEl.style.borderLeft = 'none';
-      previewEl.style.boxShadow = `0 0 15px rgba(77, 168, 218, 0.6), 0 0 30px rgba(77, 168, 218, 0.3)`;
-      previewEl.style.backgroundColor = 'rgba(77, 168, 218, 0.1)';
+      previewEl.style.boxShadow = '0 0 14px rgba(59, 130, 246, 0.5), 0 0 28px rgba(56, 189, 248, 0.25)';
+      previewEl.style.backgroundColor = 'rgba(59, 130, 246, 0.10)';
       previewEl.style.animation = 'none';
     }
   }
@@ -152,8 +153,29 @@ const discretionStringToInt = {
   'glow': 4
 };
 
+function applyTheme(theme) {
+  if (!document.documentElement) return;
+  document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
+}
+
+async function initTheme() {
+  let theme = 'light';
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    try {
+      const data = await chrome.storage.local.get(['uiTheme']);
+      if (data && (data.uiTheme === 'dark' || data.uiTheme === 'light')) {
+        theme = data.uiTheme;
+      } else if (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        theme = 'dark';
+      }
+    } catch { /* keep default */ }
+  }
+  applyTheme(theme);
+}
+
 // Initialisation
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await initTheme();
   loadSettings();
   setupEventListeners();
   loadSchemas();
@@ -340,18 +362,20 @@ function renderModelOverrides() {
 
     const div = document.createElement('div');
     div.className = 'model-override-card';
-    div.style.borderLeftColor = p.color || '#444';
+    if (p.color) {
+      div.style.borderLeftColor = p.color;
+    }
     div.innerHTML = `
       <h3>${p.name}</h3>
       <div class="model-inputs-row">
         <div class="input-group">
-          <label>Modèle Texte</label>
-          <input type="text" placeholder="Default: ${p.defaultTextModel}" 
+          <label>Modèle texte</label>
+          <input type="text" placeholder="Par défaut : ${p.defaultTextModel}" 
                  value="${customModels[id]?.text || ''}" data-provider="${id}" data-type="text" class="model-input">
         </div>
         <div class="input-group">
-          <label>Modèle Vision</label>
-          <input type="text" placeholder="Default: ${p.defaultVisionModel}" 
+          <label>Modèle vision</label>
+          <input type="text" placeholder="Par défaut : ${p.defaultVisionModel}" 
                  value="${customModels[id]?.vision || ''}" data-provider="${id}" data-type="vision" class="model-input">
         </div>
       </div>
@@ -402,7 +426,7 @@ function updateApiKeyBadges() {
     if (input && badge) {
       const hasKey = input.value.trim().length > 0;
       if (hasKey) {
-        badge.textContent = 'Configurée ✅';
+        badge.textContent = 'Configurée';
         badge.className = 'key-status-badge badge-connected';
         if (card && !card.hasAttribute('open')) {
           card.removeAttribute('open');
@@ -438,7 +462,11 @@ function updateDiscretionUI() {
 
   const level = discretionDescriptions[value];
   if (level && previewEl && descEl) {
-    descEl.innerHTML = `<strong>${level.title}</strong> — ${level.desc}`;
+    descEl.textContent = '';
+    const strongEl = document.createElement('strong');
+    strongEl.textContent = level.title;
+    descEl.appendChild(strongEl);
+    descEl.appendChild(document.createTextNode(` — ${level.desc}`));
     level.style(previewEl, color);
   }
 
@@ -475,12 +503,24 @@ function setupEventListeners() {
     });
   });
 
+  // Bascule thème Papier / Ardoise
+  if (elements.themeToggleBtn) {
+    elements.themeToggleBtn.addEventListener('click', async () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        await chrome.storage.local.set({ uiTheme: next });
+      }
+    });
+  }
+
   // Toggles de visibilité de clé API
   document.querySelectorAll('.toggle-visibility').forEach(btn => {
     btn.addEventListener('click', () => {
       const input = document.getElementById(btn.dataset.target);
       input.type = input.type === 'password' ? 'text' : 'password';
-      btn.textContent = input.type === 'password' ? '👁️' : '🔒';
+      btn.textContent = input.type === 'password' ? 'Voir' : 'Cacher';
     });
   });
 
@@ -559,13 +599,13 @@ function setupEventListeners() {
 // Tester un fournisseur
 async function testProvider(id, btn) {
   const originalText = btn.textContent;
-  btn.textContent = '⌛...';
+  btn.textContent = 'Test…';
   btn.disabled = true;
 
   const apiKeyInput = document.getElementById(`${id}ApiKey`);
   if (!apiKeyInput) {
-    showStatus(`❌ Champ de clé introuvable pour ${id}`, 'error');
-    btn.style.borderColor = '#E85D75';
+    showStatus(`Champ de clé introuvable pour ${id}.`, 'error');
+    btn.style.borderColor = 'var(--error-color)';
     btn.textContent = originalText;
     btn.disabled = false;
     return;
@@ -573,7 +613,7 @@ async function testProvider(id, btn) {
   const apiKey = apiKeyInput.value.trim();
 
   if (!apiKey) {
-    showStatus(`Veuillez entrer une clé pour ${id}`, 'error');
+    showStatus(`Entrez d'abord une clé pour ${id}.`, 'error');
     btn.textContent = originalText;
     btn.disabled = false;
     return;
@@ -586,8 +626,8 @@ async function testProvider(id, btn) {
       ? providersMap[providerKey]
       : null;
     if (!provider) {
-      showStatus(`❌ Fournisseur inconnu ou non supporté: ${id}`, 'error');
-      btn.style.borderColor = '#E85D75';
+      showStatus(`Fournisseur inconnu : ${id}.`, 'error');
+      btn.style.borderColor = 'var(--error-color)';
       return;
     }
     const model = customModels[providerKey]?.text || provider.defaultTextModel;
@@ -601,24 +641,24 @@ async function testProvider(id, btn) {
     );
 
     if (response) {
-      showStatus(`✅ Test ${id} réussi!`, 'success');
-      btn.style.borderColor = '#6BCB77';
+      showStatus(`Connexion ${id} OK.`, 'success');
+      btn.style.borderColor = 'var(--success-color)';
 
       // DET-01 : Lancement de la synchronisation des modèles en arrière-plan
-      console.log(`🔄 Lancement de la synchronisation des modèles pour ${providerKey}...`);
+      console.log(`Synchronisation des modèles pour ${providerKey}...`);
       window.ModelRegistry.syncProviderModels(providerKey, apiKey)
         .then(() => {
-          console.log(`✅ Synchronisation des modèles complétée pour ${providerKey}`);
+          console.log(`Synchronisation des modèles terminée pour ${providerKey}`);
         })
         .catch(syncErr => {
-          console.warn(`⚠️ Échec de la synchronisation des modèles après test réussi pour ${providerKey}:`, syncErr);
+          console.warn(`Échec de la synchronisation des modèles pour ${providerKey}:`, syncErr);
         });
     } else {
       throw new Error('Réponse vide');
     }
   } catch (err) {
-    showStatus(`❌ Test ${id} échoué: ${err.message}`, 'error');
-    btn.style.borderColor = '#E85D75';
+    showStatus(`Échec ${id} : ${err.message}`, 'error');
+    btn.style.borderColor = 'var(--error-color)';
   } finally {
     btn.textContent = originalText;
     btn.disabled = false;
@@ -641,13 +681,13 @@ async function handleFiles(files) {
         const pct = stats && stats.reductionRatio > 0
           ? ` (-${Math.round(stats.reductionRatio * 100)}% bruit)`
           : '';
-        showStatus(`✅ Fichier ajouté : ${file.name}${pct}`, 'success');
+        showStatus(`Fichier ajouté : ${file.name}${pct}`, 'success');
       } else {
-        showStatus(`⚠️ Fichier vide ou illisible : ${file.name}`, 'error');
+        showStatus(`Fichier vide ou illisible : ${file.name}`, 'error');
       }
     } catch (error) {
       console.error(`Erreur lecture ${file.name}:`, error);
-      showStatus(`❌ Erreur lecture : ${file.name}`, 'error');
+      showStatus(`Impossible de lire : ${file.name}`, 'error');
     }
   }
   renderFileList();
@@ -809,7 +849,7 @@ function renderFileList() {
 
     const labelWrap = document.createElement('span');
     labelWrap.className = 'file-name';
-    labelWrap.textContent = `📄 ${file.name}`;
+    labelWrap.textContent = file.name;
 
     if (file.nlpStats && file.nlpStats.reductionRatio > 0) {
       const statsSpan = document.createElement('span');
@@ -908,15 +948,15 @@ async function saveSettings() {
       highlightDiscretion: discretionStr
     });
 
-    showStatus('✅ Paramètres sauvegardés!', 'success');
+    showStatus('Enregistré.', 'success');
   } catch (error) {
     console.error('Erreur sauvegarde:', error);
-    showStatus('❌ Erreur de sauvegarde', 'error');
+    showStatus('Échec de l\'enregistrement.', 'error');
   }
 }
 
 async function resetSettings() {
-  if (confirm('Réinitialiser tout?')) {
+  if (confirm('Réinitialiser tous les paramètres ?')) {
     await chrome.storage.sync.clear();
     await chrome.storage.local.remove(Object.keys(DEFAULT_BEHAVIOR_SETTINGS));
     location.reload();
@@ -952,7 +992,7 @@ function renderSchemaList(schemas) {
   if (schemas.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'help-text';
-    empty.textContent = 'Aucun schéma en cache. Les schémas sont créés automatiquement.';
+    empty.textContent = 'Aucun site en cache pour l\'instant.';
     elements.schemaList.appendChild(empty);
     return;
   }
@@ -972,7 +1012,7 @@ function renderSchemaList(schemas) {
 
     const hostSpan = document.createElement('span');
     hostSpan.className = 'file-name';
-    hostSpan.textContent = `🌐 ${schema.hostname}`;
+    hostSpan.textContent = schema.hostname;
     info.appendChild(hostSpan);
 
     const detailSpan = document.createElement('span');
@@ -997,14 +1037,14 @@ function renderSchemaList(schemas) {
 async function handleDeleteSchema(hostname) {
   if (typeof SchemaCache === 'undefined') return;
   await SchemaCache.clearSchema(hostname);
-  showStatus(`🗑️ Schéma supprimé pour ${hostname}`, 'success');
+  showStatus(`Cache supprimé pour ${hostname}.`, 'success');
   loadSchemas();
 }
 
 async function handleClearAllSchemas() {
   if (typeof SchemaCache === 'undefined') return;
-  if (!confirm('Supprimer tous les schémas en cache ?')) return;
+  if (!confirm('Supprimer tous les sites en cache ?')) return;
   const count = await SchemaCache.clearAllSchemas();
-  showStatus(`🗑️ ${count} schéma(s) purgé(s)`, 'success');
+  showStatus(`${count} site(s) supprimé(s) du cache.`, 'success');
   loadSchemas();
 }

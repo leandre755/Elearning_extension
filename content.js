@@ -968,7 +968,7 @@
     }
 
     if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-      Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse et extraction du quiz...', percent: 10 })).catch(() => {});
+      Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Lecture du quiz…', percent: 10 })).catch(() => {});
     }
 
     if (!rootWin.SafeExm.DOMExtractor || !rootWin.SafeExm.HighlightManager) {
@@ -991,7 +991,7 @@
 
       console.log('ℹ️ Aucune question trouvée. Tentative de découverte automatique du schéma...');
       if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Découverte automatique de la structure...', percent: 12 })).catch(() => {});
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Repérage de la page…', percent: 12 })).catch(() => {});
       }
       if (forceFallback || (typeof SchemaDetector !== 'undefined' && SchemaDetector && SchemaDetector.hasInteractiveContent())) {
         try {
@@ -1057,7 +1057,7 @@
 
       console.log(`🤖 Délégation au BackgroundAgent: ${quizData.questions.length} questions`);
       if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Agent de résolution activé...', percent: 15 })).catch(() => {});
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse en cours…', percent: 15 })).catch(() => {});
       }
 
       // ─── Appel asynchrone au Background Agent via port persistant ───
@@ -1102,7 +1102,7 @@
 
       console.log(`🔗 Agent terminé: ${meta.answersFound}/${meta.questionsTotal} réponses, provider=${meta.provider}, durée=${meta.totalDurationMs}ms`);
       if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Application du surlignage...', percent: 90 })).catch(() => {});
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Marquage des réponses…', percent: 90 })).catch(() => {});
       }
 
       // Call HighlightManager API (preserve existing connected highlights in Auto Mode Delta)
@@ -1143,7 +1143,7 @@
       const autoSubmitSchedule = scheduleAutoSubmit(quizData.questions, allParsedAnswers, effectiveSettings);
 
       if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse terminée avec succès !', percent: 100 })).catch(() => {});
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Terminé.', percent: 100 })).catch(() => {});
       }
 
       return {

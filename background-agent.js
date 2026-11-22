@@ -1120,7 +1120,7 @@ const BackgroundAgent = (() => {
 
     try {
       _log(journal, 'agent_start', `Agent démarré pour ${task.questions.length} question(s)`);
-      _reportProgress(task.tabId, 'Agent de résolution démarré...', 15);
+      _reportProgress(task.tabId, 'Analyse démarrée…', 15);
 
       const settings = task.config.settings || {};
       const effectiveSyncConfig = { ...(task.config.syncConfig || {}) };
@@ -1156,12 +1156,12 @@ const BackgroundAgent = (() => {
       _log(journal, 'routing_eval', `Score de complexité calculé: ${complexityScore} (Seuil Fast <= 3)`);
 
       if (complexityScore <= 3) {
-        _reportProgress(task.tabId, 'Résolution rapide (Fast Path)...', 18);
+        _reportProgress(task.tabId, 'Analyse rapide…', 18);
         const fastResult = await _solveFastPath(effectiveTask, journal, globalAbort.signal);
         if (fastResult) {
           let finalFastAnswers = (fastResult.answers || []).map(normalizeAnswerEntry);
           if (crossValidationEnabled && !globalAbort.signal.aborted) {
-            _reportProgress(task.tabId, 'Cross-validation des réponses incertaines...', 90);
+            _reportProgress(task.tabId, 'Double vérification…', 90);
             let fastContextText = effectiveSyncConfig.contextText || '';
             for (const f of (effectiveSyncConfig.contextFiles || [])) {
               fastContextText += (f.content || '');
@@ -1187,7 +1187,7 @@ const BackgroundAgent = (() => {
 
       // ─── Phase 1 : Planning ───
       const plan = await _planStrategy(effectiveTask, journal, globalAbort.signal);
-      _reportProgress(task.tabId, `Planification de la résolution...`, 20);
+      _reportProgress(task.tabId, 'Découpage des questions…', 20);
 
       // Contexte de base : baseContextText
       const baseContextText = plan.baseContextText;
@@ -1206,7 +1206,7 @@ const BackgroundAgent = (() => {
 
         const chunk = plan.chunks[i];
         const progressPercent = Math.min(75, 25 + Math.round((i / plan.chunks.length) * 50));
-        _reportProgress(task.tabId, `Résolution de la partie ${i + 1}/${plan.chunks.length}...`, progressPercent);
+        _reportProgress(task.tabId, `Lot ${i + 1}/${plan.chunks.length}…`, progressPercent);
 
         _log(journal, 'llm_chunk', `Traitement Chunk ${i + 1}/${plan.chunks.length}: ${chunk.questions.length} questions`);
 
@@ -1283,7 +1283,7 @@ const BackgroundAgent = (() => {
 
       let finalAnswers = (validated.answers || []).map(normalizeAnswerEntry);
       if (crossValidationEnabled && !globalAbort.signal.aborted) {
-        _reportProgress(task.tabId, 'Cross-validation des réponses incertaines...', 90);
+        _reportProgress(task.tabId, 'Double vérification…', 90);
         finalAnswers = await crossValidateAnswers(finalAnswers, task.questions, {
           primaryProvider: providerKey,
           config: effectiveConfig,
@@ -1294,7 +1294,7 @@ const BackgroundAgent = (() => {
       }
       finalAnswers = finalAnswers.map(normalizeAnswerEntry);
 
-      _reportProgress(task.tabId, 'Résolution terminée', 95);
+      _reportProgress(task.tabId, 'Analyse terminée', 95);
 
       const result = {
         success: true,
@@ -2454,7 +2454,7 @@ const BackgroundAgent = (() => {
 
       retriesUsed++;
       _log(journal, 'ralph_retry', `Ralph Loop: ${missingQuestions.length} questions manquantes, retry ${retriesUsed}/${MAX_RETRIES}`);
-      _reportProgress(task.tabId, `Retry: ${missingQuestions.length} questions manquantes (${retriesUsed}/${MAX_RETRIES})...`, 85);
+      _reportProgress(task.tabId, `Vérification de ${missingQuestions.length} question(s) (${retriesUsed}/${MAX_RETRIES})…`, 85);
 
       const retryQuizData = {
         questions: missingQuestions,

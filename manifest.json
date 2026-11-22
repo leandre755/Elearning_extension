@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Safe Exm",
   "version": "1.0.0",
-  "description": "Assistant IA pour les quiz - Supporte Claude et Gemini",
+  "description": "Analyse les quiz en ligne et signale les réponses discrètement.",
   "permissions": [
     "tabs",
     "activeTab",
@@ -44,7 +44,7 @@
         "default": "Ctrl+Shift+1",
         "mac": "Command+Shift+1"
       },
-      "description": "Activer/Désactiver l'extension"
+      "description": "Activer ou couper l'extension"
     },
     "analyze-quiz": {
       "suggested_key": {
@@ -58,14 +58,14 @@
         "default": "Ctrl+Shift+3",
         "mac": "Command+Shift+3"
       },
-      "description": "Activer/Désactiver le Mode Auto"
+      "description": "Activer ou couper le mode auto"
     },
     "clear-highlights": {
       "suggested_key": {
         "default": "Ctrl+Shift+E",
         "mac": "Command+Shift+E"
       },
-      "description": "Effacer les surlignages"
+      "description": "Effacer les marques"
     }
   },
   "options_page": "settings.html",

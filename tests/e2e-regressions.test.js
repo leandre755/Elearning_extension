@@ -283,7 +283,7 @@ test('BUG-01: settings.html omits Fireworks card and settings.js testProvider ha
   // Negative/nominal control: valid provider still calls QuizProviders.callProvider
   await sandbox.testProvider('groq', fakeBtn);
   assert.equal(callProviderArgs[0], 'groq');
-  assert.ok(saveStatus.textContent.includes('réussi'));
+  assert.ok(saveStatus.textContent.includes('OK'));
 });
 
 // ===========================================================================
@@ -663,9 +663,9 @@ test('BUG-06: handleGetSchemaStatus and handleDiscoverSchema return { success, d
   vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, 'popup.js'), 'utf8'), popupSandbox);
 
   await popupSandbox.SafeExmPopup.checkSchemaStatus();
-  assert.ok(schemaText.textContent.includes('Structure reconnue (W3 Test)'));
+  assert.ok(schemaText.textContent.includes('Site reconnu · W3 Test'));
   await popupSandbox.SafeExmPopup.rediscoverSchema();
-  assert.equal(schemaText.textContent, 'Structure apprise (W3 Test)');
+  assert.equal(schemaText.textContent, 'Site mémorisé · W3 Test');
 });
 
 // ===========================================================================
@@ -1055,14 +1055,14 @@ test('BUG-06b: popup.js analyzeQuiz does not call chrome.scripting.executeScript
   await errEnv.PopupAPI.analyzeQuiz();
   assert.equal(errEnv.getSendCalls(), 1, 'LLM failure must not re-run analyzeQuiz');
   assert.equal(errEnv.executeScriptCalls.length, 0, 'LLM failure must never re-inject content scripts');
-  assert.equal(errEnv.progressText.textContent, '❌ Erreur: Simulated Claude outage');
+  assert.equal(errEnv.progressText.textContent, 'Erreur : Simulated Claude outage');
 
   // Case 2: Positive control — missing receiver triggers injection and retries once
   const missEnv = makePopupEnv('missing_then_ok');
   await missEnv.PopupAPI.analyzeQuiz();
   assert.equal(missEnv.getSendCalls(), 2, 'Missing receiver must retry once after script injection');
   assert.equal(missEnv.executeScriptCalls.length, 6, 'Missing receiver must inject all 6 core files');
-  assert.ok(missEnv.progressText.textContent.includes('✅ Surligné 1/1 réponse'));
+  assert.ok(missEnv.progressText.textContent.includes('1/1 réponse trouvée'));
 });
 
 // ===========================================================================
