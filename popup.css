@@ -1,5 +1,13 @@
 /* Safe Exm Popup — Hybride GRAPHITE (Papier Coton / Ardoise) + Accent N3 */
 
+@font-face {
+  font-family: 'Caveat Brush';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/caveat-brush-400.woff2') format('woff2');
+}
+
 :root {
   /* Light Phase — Archival Bone Paper */
   --paper-base: #F5F2EB;
@@ -27,6 +35,7 @@
   --error-color: #B91C1C;
   --warning-color: #B45309;
 
+  --font-display: 'Caveat Brush', cursive, system-ui, sans-serif;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
@@ -108,9 +117,11 @@ header {
 }
 
 .logo-title {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1;
   color: var(--ink-primary);
 }
 
@@ -202,10 +213,10 @@ main {
   border: 1px solid var(--n3-cobalt);
   background: var(--n3-gradient);
   color: #FFFFFF;
-  font-family: var(--font-sans);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   cursor: pointer;
   display: flex;
   align-items: center;

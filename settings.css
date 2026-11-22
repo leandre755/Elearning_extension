@@ -1,5 +1,13 @@
 /* Safe Exm Settings — Hybride GRAPHITE (Papier Coton / Ardoise) + Accent N3 */
 
+@font-face {
+  font-family: 'Caveat Brush';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/caveat-brush-400.woff2') format('woff2');
+}
+
 :root {
   /* Light Phase — Archival Bone Paper */
   --paper-base: #F5F2EB;
@@ -31,6 +39,7 @@
   --warning-color: #B45309;
   --warning-bg: rgba(180, 83, 9, 0.08);
 
+  --font-display: 'Caveat Brush', cursive, system-ui, sans-serif;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
@@ -131,11 +140,12 @@ body {
 }
 
 .page-header h1 {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   color: var(--ink-primary);
-  line-height: 1.15;
+  line-height: 1.05;
 }
 
 .header-subtitle {
@@ -189,10 +199,11 @@ body {
   background: transparent;
   border: 1px solid transparent;
   color: var(--ink-secondary);
-  padding: 8px 14px;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 600;
+  padding: 7px 14px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   cursor: pointer;
   border-radius: 3px;
   transition: all 0.15s ease;
@@ -268,9 +279,11 @@ body {
 }
 
 .settings-card h2 {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
   color: var(--ink-primary);
   margin-bottom: 4px;
 }
@@ -431,6 +444,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: var(--n3-gradient);
   border: 1px solid var(--n3-cobalt);
   color: #FFFFFF;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   box-shadow: 2px 2px 0 var(--shadow-hard);
 }
 
@@ -557,6 +574,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   color: var(--ink-primary);
 }
 
