@@ -12,8 +12,13 @@
   const _badgeMetadata = new WeakMap();
   const _badgeNodes = new Set();
 
-  // SEC-04 : Identifiant de session aléatoire pour la balise <style> injectée.
+  // SEC-04 : Identifiant de session et classes aléatoires pour la balise <style> injectée.
   const _styleTagId = `_s${Math.random().toString(36).slice(2, 9)}`;
+  const _badgeClass = `${_styleTagId}-b`;
+  const _floatClass = `${_styleTagId}-f`;
+  const _floatDiscreetClass = `${_styleTagId}-fd`;
+  const _floatVisibleClass = `${_styleTagId}-fv`;
+  const _floatGlowClass = `${_styleTagId}-fg`;
 
   let highlights = [];
   let floatingButtons = [];
@@ -21,6 +26,9 @@
   let _intersectionObserver = null;
   let _mutationObserver = null;
   let _isHealing = false;
+  let _healGeneration = 0;
+  let _renderedQuestions = new WeakSet();
+  let _intersectingTargets = new WeakMap();
 
   /**
    * Vérifie si un élément DOM est connecté au document, y compris à l'intérieur d'un ShadowRoot.
@@ -215,6 +223,7 @@
       _mutationObserver.disconnect();
       _mutationObserver = null;
     }
+    _intersectingTargets = new WeakMap();
   }
 
   function suspendObservers() {
@@ -222,25 +231,117 @@
     if (_mutationObserver) _mutationObserver.disconnect();
   }
 
-  function resumeObservers() {
-    if (!_storedHighlightData || !Array.isArray(_storedHighlightData.questions)) return;
-    const { questions } = _storedHighlightData;
+  function observeMutationTargets(mo, questions) {
+    if (!mo || !Array.isArray(questions)) return;
+    const observedParents = new Set();
     questions.forEach(q => {
       if (q && q.element) {
-        if (_intersectionObserver) {
-          try { _intersectionObserver.observe(q.element); } catch (e) { /* ignore */ }
-        }
-        if (_mutationObserver) {
+        try {
+          mo.observe(q.element, {
+            attributes: true,
+            attributeFilter: ['class', 'style', 'aria-hidden'],
+            subtree: true
+          });
+        } catch (e) { /* element might be detached */ }
+        const parent = q.element.parentNode;
+        if (parent && (parent.nodeType === 1 || parent.nodeType === 11) && !observedParents.has(parent)) {
+          observedParents.add(parent);
           try {
-            _mutationObserver.observe(q.element, {
-              attributes: true,
-              attributeFilter: ['class', 'style', 'aria-hidden'],
-              subtree: true
-            });
-          } catch (e) { /* element might be detached */ }
+            mo.observe(parent, { childList: true });
+          } catch (e) { /* parent might be detached */ }
         }
       }
     });
+  }
+
+  function observeIntersectionTargets(io, questions) {
+    if (!io || !Array.isArray(questions)) return;
+    questions.forEach(q => {
+      if (q && q.element) {
+        try { io.observe(q.element); } catch (e) { /* ignore */ }
+      }
+    });
+  }
+
+  /**
+   * Attache les observateurs aux conteneurs de questions et à leurs parents directs
+   * pour détecter les remplacements de nœuds (SPA re-render) via childList.
+   */
+  function observeQuestionTargets(mo, io, questions) {
+    observeIntersectionTargets(io, questions);
+    observeMutationTargets(mo, questions);
+  }
+
+  function isOwnUiNode(node) {
+    if (!node || typeof node !== 'object') return false;
+    if (_badgeNodes.has(node) || floatingButtons.includes(node) || node.id === _styleTagId) {
+      return true;
+    }
+    if (node.classList && typeof node.classList.contains === 'function') {
+      if (node.classList.contains(_badgeClass) || node.classList.contains(_floatClass)) {
+        return true;
+      }
+    }
+    if (typeof node.className === 'string') {
+      if (node.className.includes(_badgeClass) || node.className.includes(_floatClass)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isOwnUiMutation(records) {
+    if (!Array.isArray(records) || records.length === 0) return false;
+    for (const rec of records) {
+      if (!rec || rec.type !== 'childList') return false;
+      const changed = [
+        ...(rec.addedNodes ? Array.from(rec.addedNodes) : []),
+        ...(rec.removedNodes ? Array.from(rec.removedNodes) : [])
+      ];
+      if (changed.length === 0) return false;
+      for (const node of changed) {
+        if (!isOwnUiNode(node)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function alignAnswersToRefreshedQuestions(prevQuestions, prevAnswers, newQuestions) {
+    if (!Array.isArray(prevQuestions) || !Array.isArray(prevAnswers) || !Array.isArray(newQuestions)) {
+      return [];
+    }
+    const ansByPrevIdx = new Map();
+    prevAnswers.forEach(a => {
+      if (a && typeof a.questionIndex === 'number') {
+        ansByPrevIdx.set(a.questionIndex, a);
+      }
+    });
+    const ansByText = new Map();
+    prevQuestions.forEach((pq, pPos) => {
+      const logicalIdx = (pq && typeof pq.index === 'number') ? pq.index - 1 : pPos;
+      const a = ansByPrevIdx.get(logicalIdx) || ansByPrevIdx.get(pPos);
+      const t = pq && typeof pq.text === 'string' ? pq.text.trim() : '';
+      if (t && a && !ansByText.has(t)) {
+        ansByText.set(t, a);
+      }
+    });
+    const remapped = [];
+    newQuestions.forEach((nq, nPos) => {
+      if (nq) nq.index = nPos + 1;
+      const t = nq && typeof nq.text === 'string' ? nq.text.trim() : '';
+      const matched = t ? ansByText.get(t) : null;
+      if (matched) {
+        remapped.push({ ...matched, questionIndex: nPos });
+      }
+    });
+    return remapped;
+  }
+
+  function resumeObservers() {
+    if (!_storedHighlightData || !Array.isArray(_storedHighlightData.questions)) return;
+    observeQuestionTargets(_mutationObserver, _intersectionObserver, _storedHighlightData.questions);
   }
 
   function setupHighlightObservers() {
@@ -249,37 +350,38 @@
     if (!_storedHighlightData) {
       return;
     }
-    const { questions, answers, color, options } = _storedHighlightData;
 
     if (typeof IntersectionObserver === 'function') {
       _intersectionObserver = new IntersectionObserver((entries) => {
+        if (_isHealing || !_storedHighlightData) return;
         let needsRedraw = false;
         for (const entry of entries) {
-          if (entry.isIntersecting) {
+          if (!entry || !entry.target) continue;
+          const wasIntersecting = _intersectingTargets.get(entry.target);
+          const nowIntersecting = Boolean(entry.isIntersecting);
+          _intersectingTargets.set(entry.target, nowIntersecting);
+          if (nowIntersecting && (!_renderedQuestions.has(entry.target) || wasIntersecting === false)) {
             needsRedraw = true;
-            break;
           }
         }
         if (needsRedraw) {
-          suspendObservers();
-          const status = renderVisibleHighlights(questions, answers, color, options);
+          const cur = _storedHighlightData;
+          const status = renderVisibleHighlights(cur.questions, cur.answers, cur.color, cur.options);
           if (status === 'NEEDS_HEAL') {
-            repairDeadNodes(answers, color);
-          } else {
-            resumeObservers();
+            repairDeadNodes(cur.answers, cur.color);
           }
         }
       }, { threshold: 0.05 });
     }
 
     if (typeof MutationObserver === 'function') {
-      _mutationObserver = new MutationObserver(() => {
-        suspendObservers();
-        const status = renderVisibleHighlights(questions, answers, color, options);
+      _mutationObserver = new MutationObserver((records) => {
+        if (_isHealing || !_storedHighlightData) return;
+        if (isOwnUiMutation(records)) return;
+        const cur = _storedHighlightData;
+        const status = renderVisibleHighlights(cur.questions, cur.answers, cur.color, cur.options);
         if (status === 'NEEDS_HEAL') {
-          repairDeadNodes(answers, color);
-        } else {
-          resumeObservers();
+          repairDeadNodes(cur.answers, cur.color);
         }
       });
     }
@@ -289,6 +391,8 @@
 
   async function repairDeadNodes(answers, color) {
     if (_isHealing) return;
+    const healGen = ++_healGeneration;
+    const targetData = _storedHighlightData;
     _isHealing = true;
     suspendObservers();
     try {
@@ -299,22 +403,41 @@
       }
       const newData = await rootWin.SafeExm.DOMExtractor.extractQuizData();
 
-      if (newData && Array.isArray(newData.questions) && newData.questions.length > 0 && _storedHighlightData) {
-        if (newData.questions.length === _storedHighlightData.questions.length) {
-          _storedHighlightData.questions = newData.questions;
-          console.log('✅ [Auto-Heal] Nœuds rafraîchis avec succès !');
-          renderVisibleHighlights(newData.questions, answers, color, _storedHighlightData.options);
-        } else {
-          console.warn(`⚠️ [Auto-Heal] Le nombre de questions a changé (${newData.questions.length} vs ${_storedHighlightData.questions.length})`);
-          _storedHighlightData.questions = newData.questions;
-          renderVisibleHighlights(newData.questions, answers, color, _storedHighlightData.options);
-        }
+      if (healGen !== _healGeneration || !_storedHighlightData || _storedHighlightData !== targetData) {
+        return;
       }
+
+      if (!newData || !Array.isArray(newData.questions) || newData.questions.length === 0) {
+        clearAllHighlights();
+        return;
+      }
+
+      const prevQuestions = _storedHighlightData.questions || [];
+      const baseAnswers = Array.isArray(answers) ? answers : (_storedHighlightData.answers || []);
+      const alignedAnswers = alignAnswersToRefreshedQuestions(prevQuestions, baseAnswers, newData.questions);
+      if (alignedAnswers.length === 0) {
+        console.log('ℹ️ [Auto-Heal] Questions remplacées sans correspondance — nettoyage des surlignages.');
+        clearAllHighlights();
+        return;
+      }
+      if (newData.questions.length === prevQuestions.length && alignedAnswers.length === prevQuestions.length) {
+        console.log('✅ [Auto-Heal] Nœuds rafraîchis avec succès !');
+      } else {
+        console.warn(`⚠️ [Auto-Heal] Le nombre de questions alignées a changé (${alignedAnswers.length} vs ${prevQuestions.length})`);
+      }
+      _storedHighlightData.questions = newData.questions;
+      _storedHighlightData.answers = alignedAnswers;
+      renderVisibleHighlights(newData.questions, alignedAnswers, color, _storedHighlightData.options);
     } catch (e) {
       console.error('❌ [Auto-Heal] Erreur:', e);
     } finally {
-      _isHealing = false;
-      resumeObservers();
+      if (healGen === _healGeneration) {
+        _isHealing = false;
+        _intersectingTargets = new WeakMap();
+        if (_storedHighlightData) {
+          resumeObservers();
+        }
+      }
     }
   }
 
@@ -343,6 +466,37 @@
       @keyframes ${_styleTagId}-float {
         0%, 100% { transform: translateY(0); }
         50% { transform: translateY(-5px); }
+      }
+      .${_floatClass}.${_floatDiscreetClass}:hover {
+        background: #20374C !important;
+        color: #fff !important;
+        border-color: rgba(255, 255, 255, 0.3) !important;
+      }
+      .${_floatClass}.${_floatVisibleClass}:hover {
+        transform: scale(1.05) !important;
+      }
+      .${_floatClass}.${_floatGlowClass}:hover {
+        transform: scale(1.2) !important;
+        box-shadow: 0 6px 20px rgba(0, 180, 255, 0.7) !important;
+      }
+      .${_floatClass}::after {
+        content: attr(title);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 5px 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        font-size: 11px;
+        border-radius: 4px;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+      }
+      .${_floatClass}:hover::after {
+        opacity: 1;
       }
     `;
     const styleRoot = document.head || document.documentElement;
@@ -476,7 +630,7 @@
     const palette = tierPalettes[tier] || tierPalettes.medium;
 
     const badge = document.createElement('span');
-    badge.className = `${_styleTagId}-badge qh-confidence-badge tier-${tier}`;
+    badge.className = _badgeClass;
     const baseLabel = numericConfidence !== null ? `${numericConfidence}%` : tier.toUpperCase();
     badge.textContent = cvIndicator ? `${baseLabel} ${cvIndicator}` : baseLabel;
 
@@ -495,7 +649,8 @@
       color: palette.fg,
       border: `1px solid ${palette.border}`,
       verticalAlign: 'middle',
-      userSelect: 'none'
+      userSelect: 'none',
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
     });
 
     const explanation = typeof answer.explanation === 'string' ? answer.explanation.trim() : '';
@@ -558,7 +713,7 @@
     if (typeof document === 'undefined' || !document || typeof document.createElement !== 'function') return null;
 
     const button = document.createElement('div');
-    button.className = 'quiz-helper-float-button';
+    button.className = _floatClass;
     button.textContent = '✨';
     button.title = 'Cliquer pour insérer la réponse';
 
@@ -572,7 +727,7 @@
 
     button.style = button.style || {};
     if (discretion === 'furtif') {
-      if (button.classList) button.classList.add('discreet');
+      if (button.classList) button.classList.add(_floatDiscreetClass);
       Object.assign(button.style, {
         position: 'absolute',
         top: `${rect.top + scrollTop + (rect.height - 20) / 2}px`,
@@ -593,7 +748,7 @@
         userSelect: 'none'
       });
     } else if (discretion === 'visible') {
-      if (button.classList) button.classList.add('visible-mode');
+      if (button.classList) button.classList.add(_floatVisibleClass);
       Object.assign(button.style, {
         position: 'absolute',
         top: `${rect.top + scrollTop + (rect.height - 24) / 2}px`,
@@ -613,7 +768,7 @@
         userSelect: 'none'
       });
     } else { // glow
-      if (button.classList) button.classList.add(_styleTagId);
+      if (button.classList) button.classList.add(_floatGlowClass);
       Object.assign(button.style, {
         position: 'absolute',
         top: `${rect.top + scrollTop + 10}px`,
@@ -633,6 +788,7 @@
         userSelect: 'none'
       });
     }
+    ensureDynamicStyleTag(color);
 
     if (typeof button.addEventListener === 'function') {
       button.addEventListener('click', () => {
@@ -840,13 +996,12 @@
     });
     highlights = [];
     floatingButtons = [];
+    _renderedQuestions = new WeakSet();
   }
 
   function renderVisibleHighlights(questions, answers, color = '#00b4ff', options = {}) {
     const tempMO = _mutationObserver;
-    const tempIO = _intersectionObserver;
     if (tempMO) tempMO.disconnect();
-    if (tempIO) tempIO.disconnect();
 
     try {
       removeTransientHighlights();
@@ -878,11 +1033,11 @@
           continue;
         }
 
-        if (question.element && !isVisibleFn(question.element)) {
-          continue;
+        // 🚨 AUTO-HEAL CHECK BEFORE isElementVisible (detached nodes have zero bounding rect!) 🚨
+        if (question.element && !isElementConnected(question.element)) {
+          console.warn(`⚠️ [Auto-Heal] Conteneur mort détecté pour Q${idx + 1} (SPA Re-render)`);
+          return 'NEEDS_HEAL';
         }
-
-        // 🚨 AUTO-HEAL CHECK (compatible Shadow DOM via isElementConnected) 🚨
         if (Array.isArray(question.options) && question.options.length > 0) {
           const sampleElement = question.options[0].element;
           if (sampleElement && !isElementConnected(sampleElement)) {
@@ -900,32 +1055,20 @@
           return 'NEEDS_HEAL';
         }
 
+        if (question.element && !isVisibleFn(question.element)) {
+          continue;
+        }
+
         highlightQuestion(question, answer, color, options);
+        if (question.element) {
+          _renderedQuestions.add(question.element);
+        }
       }
 
       return 'OK';
     } finally {
-      if (tempMO && Array.isArray(questions)) {
-        questions.forEach(q => {
-          if (q && q.element) {
-            try {
-              tempMO.observe(q.element, {
-                attributes: true,
-                attributeFilter: ['class', 'style', 'aria-hidden'],
-                subtree: true
-              });
-            } catch (e) { /* detached */ }
-          }
-        });
-      }
-      if (tempIO && Array.isArray(questions)) {
-        questions.forEach(q => {
-          if (q && q.element) {
-            try {
-              tempIO.observe(q.element);
-            } catch (e) { /* detached */ }
-          }
-        });
+      if (!_isHealing && Array.isArray(questions)) {
+        observeMutationTargets(tempMO, questions);
       }
     }
   }
@@ -944,6 +1087,8 @@
 
   function clearAllHighlights() {
     console.log('🧹 Nettoyage des surlignages...');
+    _healGeneration++;
+    _isHealing = false;
     if (rootWin.SafeExm && rootWin.SafeExm.Content && typeof rootWin.SafeExm.Content.cancelPendingAutoSubmit === 'function') {
       try {
         rootWin.SafeExm.Content.cancelPendingAutoSubmit();
@@ -992,6 +1137,7 @@
 
     highlights = [];
     floatingButtons = [];
+    _renderedQuestions = new WeakSet();
     _storedHighlightData = null;
     clearObservers();
 
@@ -1005,11 +1151,71 @@
     }
   }
 
+  function buildAppendMergedState(prevData, nextQuestions, nextAnswers) {
+    const prevQuestions = Array.isArray(prevData && prevData.questions) ? prevData.questions : [];
+    const prevAnswers = Array.isArray(prevData && prevData.answers) ? prevData.answers : [];
+    const prevAnswerByIdx = new Map();
+    prevAnswers.forEach(a => {
+      if (a && typeof a.questionIndex === 'number') {
+        prevAnswerByIdx.set(a.questionIndex, a);
+      }
+    });
+
+    const incomingElements = new Set();
+    const incomingTexts = new Set();
+    (Array.isArray(nextQuestions) ? nextQuestions : []).forEach(q => {
+      if (q && q.element) incomingElements.add(q.element);
+      if (q && typeof q.text === 'string' && q.text.trim()) incomingTexts.add(q.text.trim());
+    });
+
+    const mergedQuestions = [];
+    const mergedAnswers = [];
+
+    prevQuestions.forEach((pq, pPos) => {
+      const logicalIdx = (pq && typeof pq.index === 'number') ? pq.index - 1 : pPos;
+      const pa = prevAnswerByIdx.get(logicalIdx) || prevAnswerByIdx.get(pPos);
+      if (!pq || !pa) return;
+      if (pq.element && !isElementConnected(pq.element)) return;
+      const t = typeof pq.text === 'string' ? pq.text.trim() : '';
+      if ((pq.element && incomingElements.has(pq.element)) || (t && incomingTexts.has(t))) return;
+      const newPos = mergedQuestions.length;
+      mergedQuestions.push({ ...pq, index: newPos + 1 });
+      mergedAnswers.push({ ...pa, questionIndex: newPos });
+    });
+
+    const nextAnswerByIdx = new Map();
+    (Array.isArray(nextAnswers) ? nextAnswers : []).forEach(a => {
+      if (a && typeof a.questionIndex === 'number') {
+        nextAnswerByIdx.set(a.questionIndex, a);
+      }
+    });
+    (Array.isArray(nextQuestions) ? nextQuestions : []).forEach((nq, nPos) => {
+      const logicalIdx = (nq && typeof nq.index === 'number') ? nq.index - 1 : nPos;
+      const na = nextAnswerByIdx.get(logicalIdx) || nextAnswerByIdx.get(nPos);
+      const newPos = mergedQuestions.length;
+      mergedQuestions.push(nq ? { ...nq, index: newPos + 1 } : nq);
+      if (na) {
+        mergedAnswers.push({ ...na, questionIndex: newPos });
+      }
+    });
+
+    return { questions: mergedQuestions, answers: mergedAnswers };
+  }
+
   async function applyHighlights(questions, answers, options = {}) {
     console.log('✨ Application des surlignages...');
+    const prevData = (options && options.append === true && _storedHighlightData) ? _storedHighlightData : null;
     clearAllHighlights();
+    const applyGen = _healGeneration;
 
-    _storedHighlightData = { questions, answers, options };
+    const merged = prevData
+      ? buildAppendMergedState(prevData, questions, answers)
+      : { questions, answers };
+    const effectiveQuestions = merged.questions;
+    const effectiveAnswers = merged.answers;
+
+    const targetData = { questions: effectiveQuestions, answers: effectiveAnswers, options };
+    _storedHighlightData = targetData;
 
     let highlightColor = (options && typeof options.color === 'string') ? options.color : '#00b4ff';
     try {
@@ -1024,19 +1230,33 @@
       }
     } catch (e) { /* use default */ }
 
-    _storedHighlightData.color = highlightColor;
-
-    const status = renderVisibleHighlights(questions, answers, highlightColor, options);
-    if (status === 'NEEDS_HEAL') {
-      repairDeadNodes(answers, highlightColor);
+    if (applyGen !== _healGeneration || _storedHighlightData !== targetData) {
+      return 'CANCELLED';
     }
 
-    setupHighlightObservers();
+    targetData.color = highlightColor;
+
+    const status = renderVisibleHighlights(effectiveQuestions, effectiveAnswers, highlightColor, options);
+    if (status === 'NEEDS_HEAL') {
+      await repairDeadNodes(effectiveAnswers, highlightColor);
+      if (_storedHighlightData === targetData) {
+        setupHighlightObservers();
+      }
+      return status;
+    }
+
+    if (_storedHighlightData === targetData) {
+      setupHighlightObservers();
+    }
     return status;
   }
 
   function getActiveBadges() {
     return Array.from(_badgeNodes);
+  }
+
+  function getFloatingButtons() {
+    return Array.from(floatingButtons);
   }
 
   function getBadgeMetadata(badgeEl) {
@@ -1057,11 +1277,13 @@
     resolveConfidenceTier,
     resolveDiscretionLevel,
     getActiveBadges,
+    getFloatingButtons,
     getBadgeMetadata,
     getStoredHighlightData,
     setStoredHighlightData,
     suspendObservers,
     resumeObservers,
+    isOwnUiMutation,
     _styleTagId
   };
 

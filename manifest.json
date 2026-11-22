@@ -35,9 +35,6 @@
       "js": [
         "loader.js"
       ],
-      "css": [
-        "content.css"
-      ],
       "run_at": "document_end"
     }
   ],

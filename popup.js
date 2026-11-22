@@ -411,6 +411,9 @@ async function analyzeQuiz() {
         forceFallback: true
       });
     } catch (err) {
+      if (!err || !err.isMissingReceiver) {
+        throw err;
+      }
       console.log('⚠️ Script non détecté, injection en cours...');
       showProgress('Injection du script cœur...', 15);
 
@@ -454,7 +457,10 @@ function sendMessageToTab(tabId, message) {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, (response) => {
       if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+        const msg = chrome.runtime.lastError.message || 'Erreur de communication avec l\'onglet';
+        const err = new Error(msg);
+        err.isMissingReceiver = /receiving end does not exist|could not establish connection/i.test(msg);
+        reject(err);
         return;
       }
 
@@ -462,7 +468,9 @@ function sendMessageToTab(tabId, message) {
         showResults(response.data);
         resolve(response);
       } else {
-        reject(new Error(response?.error || 'Erreur inconnue'));
+        const err = new Error(response?.error || 'Erreur inconnue');
+        err.isMissingReceiver = false;
+        reject(err);
       }
     });
   });
@@ -525,10 +533,13 @@ async function checkSchemaStatus() {
       return;
     }
 
-    const data = response.data;
+    const data = response.data || response;
     if (!elements.schemaStatus) return;
 
     elements.schemaStatus.style.display = 'flex';
+    if (elements.schemaRediscoverBtn) {
+      elements.schemaRediscoverBtn.style.display = '';
+    }
 
     if (data.hasSchema) {
       elements.schemaStatus.className = 'schema-status known';
@@ -543,7 +554,9 @@ async function checkSchemaStatus() {
       elements.schemaStatus.className = 'schema-status';
       elements.schemaIcon.textContent = 'ℹ️';
       elements.schemaText.textContent = 'Aucun questionnaire détecté';
-      elements.schemaRediscoverBtn.style.display = 'none';
+      if (elements.schemaRediscoverBtn) {
+        elements.schemaRediscoverBtn.style.display = 'none';
+      }
     }
   } catch (e) {
     if (elements.schemaStatus) elements.schemaStatus.style.display = 'none';
@@ -575,8 +588,8 @@ async function rediscoverSchema() {
     if (response && response.success) {
       elements.schemaStatus.className = 'schema-status known';
       elements.schemaIcon.textContent = '🧠';
-      const d = response.data;
-      elements.schemaText.textContent = `Structure apprise (${d.platform})`;
+      const d = response.data || response.schema || {};
+      elements.schemaText.textContent = `Structure apprise (${d.platform || 'Inconnue'})`;
     } else {
       elements.schemaStatus.className = 'schema-status unknown';
       elements.schemaIcon.textContent = '❌';
@@ -592,12 +605,16 @@ async function rediscoverSchema() {
 }
 
 const PopupAPI = {
+  analyzeQuiz,
+  sendMessageToTab,
   loadProviderStats,
   renderProviderStats,
   resetProviderStats,
   normalizeProviderMetrics,
   checkApiConnection,
-  loadSettings
+  loadSettings,
+  checkSchemaStatus,
+  rediscoverSchema
 };
 
 if (typeof window !== 'undefined') {

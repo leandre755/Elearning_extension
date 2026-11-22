@@ -37,6 +37,66 @@
   // Feedback tracking
   let _feedbackSent = false;
 
+  // F-DET-04 : Etat opt-in de l'interception réseau passive dans le MAIN world
+  let _passiveBridgeEnabled = false;
+  let _passiveBridgeSyncPromise = Promise.resolve();
+
+  function _performSyncPassiveNetworkInterceptor(shouldEnable) {
+    const wantEnable = shouldEnable === true;
+    const extractor = (rootWin.SafeExm && rootWin.SafeExm.DOMExtractor) ||
+      (typeof DOMExtractor !== 'undefined' ? DOMExtractor : null);
+
+    return (async () => {
+      if (wantEnable) {
+        if (!isExtensionEnabled()) {
+          return { enabled: false, skipped: 'disabled' };
+        }
+        if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+          return { enabled: false, skipped: 'no-runtime' };
+        }
+        const injectResp = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ action: 'injectPageBridge' }, (resp) => {
+            if (chrome.runtime && chrome.runtime.lastError) {
+              resolve(null);
+            } else {
+              resolve(resp);
+            }
+          });
+        });
+        if (!injectResp || !injectResp.success) {
+          _passiveBridgeEnabled = false;
+          return { enabled: false, error: (injectResp && injectResp.error) || 'inject_failed' };
+        }
+        const bridgeRes = (extractor && typeof extractor.requestPageBridge === 'function')
+          ? await extractor.requestPageBridge('enableNetworkInterceptor')
+          : null;
+        _passiveBridgeEnabled = Boolean(bridgeRes && bridgeRes.ok && bridgeRes.data && bridgeRes.data.enabled);
+        return { enabled: _passiveBridgeEnabled, response: bridgeRes };
+      }
+
+      if (!_passiveBridgeEnabled) {
+        return { enabled: false, skipped: 'not-active' };
+      }
+      if (extractor && typeof extractor.requestPageBridge === 'function') {
+        await extractor.requestPageBridge('restoreNetworkInterceptor');
+      }
+      _passiveBridgeEnabled = false;
+      return { enabled: false, restored: true };
+    })();
+  }
+
+  /**
+   * Active ou restaure de façon sérialisée et strictement opt-in le bridge réseau MAIN world.
+   */
+  function syncPassiveNetworkInterceptor(shouldEnable) {
+    const next = _passiveBridgeSyncPromise.then(
+      () => _performSyncPassiveNetworkInterceptor(shouldEnable),
+      () => _performSyncPassiveNetworkInterceptor(shouldEnable)
+    );
+    _passiveBridgeSyncPromise = next.catch(() => {});
+    return next;
+  }
+
   const EXTRA_LOCAL_BEHAVIOR_KEYS = [
     'domainPreset',
     'customDomainRules',
@@ -62,6 +122,17 @@
       // Auto Mode Bootstrapping
       if (typeof ConfigCache.get === 'function' && ConfigCache.get('autoMode') === true) {
         setupAutoModeObserver();
+      }
+
+      // Opt-in MAIN-world passive network interception bootstrap (non-blocking, zero await before ContentAPI export)
+      if (isEnabled && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === 'function') {
+        Promise.resolve(chrome.storage.local.get(['passiveNetworkIntercept']))
+          .then((localBridgeCfg) => {
+            if (isExtensionEnabled() && localBridgeCfg && localBridgeCfg.passiveNetworkIntercept === true) {
+              syncPassiveNetworkInterceptor(true).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
     }
   } catch (e) {
@@ -147,7 +218,11 @@
       return;
     }
 
-    _autoModeObserver = new MutationObserver(() => {
+    _autoModeObserver = new MutationObserver((records) => {
+      const hm = rootWin.SafeExm && rootWin.SafeExm.HighlightManager;
+      if (hm && typeof hm.isOwnUiMutation === 'function' && hm.isOwnUiMutation(records)) {
+        return;
+      }
       triggerAutoAnalysis('DOM Mutation');
     });
 
@@ -171,7 +246,7 @@
     console.log('🤖 Auto Mode: Observateur arrêté.');
   }
 
-  // Listen to configuration change to toggle Auto Mode & Panic abort
+  // Listen to configuration change to toggle Auto Mode, Panic abort & opt-in network bridge
   if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.onChange === 'function') {
     ConfigCache.onChange((changes) => {
       if (changes.autoMode) {
@@ -184,10 +259,14 @@
       if (changes.autoSubmitEnabled && changes.autoSubmitEnabled.newValue !== true) {
         cancelPendingAutoSubmit();
       }
+      if (changes.passiveNetworkIntercept) {
+        syncPassiveNetworkInterceptor(changes.passiveNetworkIntercept.newValue === true).catch(() => {});
+      }
       if (changes.enabled) {
         isEnabled = changes.enabled.newValue === true;
         if (!isEnabled) {
           cancelPendingAutoSubmit();
+          syncPassiveNetworkInterceptor(false).catch(() => {});
           if (rootWin.SafeExm.HighlightManager) {
             rootWin.SafeExm.HighlightManager.clearAllHighlights();
           }
@@ -213,8 +292,11 @@
           return;
         }
 
-        const contentHash = (document.body?.textContent || '').substring(0, 500);
-        if (contentHash === _lastAutoContentHash && contentHash.length > 50) {
+        const rawBodyText = (document.body?.innerText || document.body?.textContent || '').trim();
+        const contentHash = rawBodyText.length <= 1000
+          ? rawBodyText
+          : `${rawBodyText.length}:${rawBodyText.slice(0, 500)}:${rawBodyText.slice(-500)}`;
+        if (contentHash === _lastAutoContentHash && rawBodyText.length > 50) {
           return;
         }
         _lastAutoContentHash = contentHash;
@@ -303,6 +385,7 @@
           isEnabled = Boolean(message.enabled);
           if (!isEnabled) {
             cancelPendingAutoSubmit();
+            syncPassiveNetworkInterceptor(false).catch(() => {});
             rootWin.SafeExm.HighlightManager.clearAllHighlights();
           }
           console.log('🔄 Extension:', isEnabled ? 'activée' : 'désactivée');
@@ -878,6 +961,12 @@
     const safeSummary = buildSafeSettingsSummary(effectiveSettings);
     console.log('⚙️ Settings:', safeSummary, 'Force Fallback:', Boolean(forceFallback));
 
+    if (effectiveSettings.passiveNetworkIntercept === true) {
+      await syncPassiveNetworkInterceptor(true).catch(() => {});
+    } else if (_passiveBridgeEnabled) {
+      await syncPassiveNetworkInterceptor(false).catch(() => {});
+    }
+
     if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
       Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse et extraction du quiz...', percent: 10 })).catch(() => {});
     }
@@ -1016,9 +1105,10 @@
         Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Application du surlignage...', percent: 90 })).catch(() => {});
       }
 
-      // Call HighlightManager API
+      // Call HighlightManager API (preserve existing connected highlights in Auto Mode Delta)
       await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
-        stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion
+        stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion,
+        append: Boolean(isAuto)
       });
 
       // Stocker les questions analysées pour le mode Auto (Delta)
@@ -1029,16 +1119,22 @@
       }
 
       // Stocker les réponses texte pour le menu contextuel
-      pendingTextAnswers = [];
+      const isConnectedFn = rootWin.SafeExm.HighlightManager && rootWin.SafeExm.HighlightManager.isElementConnected;
+      pendingTextAnswers = isAuto
+        ? pendingTextAnswers.filter(item => item && (!item.element || (typeof isConnectedFn === 'function' ? isConnectedFn(item.element) : true)))
+        : [];
       for (const ans of allParsedAnswers) {
         const text = ans.textAnswer || ans.raw;
         if (text && text.trim().length > 0) {
           const q = quizData.questions[ans.questionIndex];
-          pendingTextAnswers.push({
-            questionIndex: ans.questionIndex,
-            answer: text,
-            element: q ? (q.inputElement || null) : null
-          });
+          const el = q ? (q.inputElement || null) : null;
+          if (!el || !pendingTextAnswers.some(p => p.element === el)) {
+            pendingTextAnswers.push({
+              questionIndex: ans.questionIndex,
+              answer: text,
+              element: el
+            });
+          }
         }
       }
       console.log(`📋 ${pendingTextAnswers.length} réponse(s) texte en attente pour le collage via menu contextuel.`);
@@ -1088,7 +1184,7 @@
     if (typeof SchemaCache !== 'undefined') {
       await SchemaCache.saveSchema(hostname, schema);
     }
-    return { success: true, schema };
+    return { success: true, schema, data: schema };
   }
 
   async function handleGetSchemaStatus() {
@@ -1097,10 +1193,22 @@
     if (typeof SchemaCache !== 'undefined') {
       cached = await SchemaCache.getCachedSchema(hostname);
     }
-    return {
+    let hasInteractive = false;
+    try {
+      if (typeof SchemaDetector !== 'undefined' && SchemaDetector && typeof SchemaDetector.hasInteractiveContent === 'function') {
+        hasInteractive = Boolean(SchemaDetector.hasInteractiveContent());
+      }
+    } catch (e) { /* ignore */ }
+    const payload = {
       hasSchema: !!cached,
       platform: cached ? cached.platform : null,
-      hostname
+      hostname,
+      hasInteractive
+    };
+    return {
+      success: true,
+      ...payload,
+      data: payload
     };
   }
 
@@ -1124,6 +1232,10 @@
   // Export Content API
   const ContentAPI = {
     handleAnalyzeQuiz,
+    handleDiscoverSchema,
+    handleGetSchemaStatus,
+    syncPassiveNetworkInterceptor,
+    isPassiveNetworkInterceptorEnabled: () => _passiveBridgeEnabled,
     isQuizPage,
     buildSafeSettingsSummary,
     filterAndReindexDeltaQuestions,
@@ -1140,7 +1252,10 @@
     clearAnalyzedQuestionTexts: () => _analyzedQuestionTexts.clear(),
     setEnabled: (val) => {
       isEnabled = Boolean(val);
-      if (!isEnabled) cancelPendingAutoSubmit();
+      if (!isEnabled) {
+        cancelPendingAutoSubmit();
+        syncPassiveNetworkInterceptor(false).catch(() => {});
+      }
     },
     getEnabled: () => isExtensionEnabled()
   };

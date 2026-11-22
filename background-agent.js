@@ -316,6 +316,227 @@ const BackgroundAgent = (() => {
   }
 
   /**
+   * Normalise les métadonnées de type et d'options/cibles d'une question.
+   */
+  function _getNormalizedQuestionMeta(q) {
+    const rawType = String((q && q.type) || '').toLowerCase();
+    const normType = String((q && (q.questionType || q.type)) || 'unknown').toLowerCase();
+    const selects = q && Array.isArray(q.selects) ? q.selects : [];
+    const options = q && Array.isArray(q.options) ? q.options : [];
+    const draggables = q && Array.isArray(q.draggables) ? q.draggables : [];
+    const dropTargets = q && Array.isArray(q.dropTargets) ? q.dropTargets : [];
+    const isMultiSelectMatching = (rawType === 'select_matching' || normType === 'select_matching') && selects.length > 1;
+    const isSingleSelectMatching = (rawType === 'select_matching' || normType === 'select_matching') && selects.length <= 1;
+    const isDragDrop = rawType === 'drag_drop' || normType === 'drag_drop' || dropTargets.length > 0;
+    const isTextLike = rawType === 'text' || rawType === 'fill_blank' || normType === 'text' || normType === 'fill_blank';
+    const singleSelectOptions = (selects.length === 1 && selects[0] && Array.isArray(selects[0].options))
+      ? selects[0].options
+      : [];
+    const effectiveOptions = options.length > 0
+      ? options
+      : (singleSelectOptions.length > 0 ? singleSelectOptions : draggables);
+    return {
+      rawType,
+      normType,
+      selects,
+      options,
+      draggables,
+      dropTargets,
+      effectiveOptions,
+      isMultiSelectMatching,
+      isSingleSelectMatching,
+      isDragDrop,
+      isTextLike
+    };
+  }
+
+  /**
+   * Formate de manière uniforme une question normalisée (QCM, select_matching, drag_drop,
+   * fill_blank, texte) pour les prompts de résolution et de vérification.
+   */
+  function _formatQuestionForPrompt(q, displayNumber, opts = {}) {
+    if (!q || typeof q !== 'object') return '';
+    let out = `Question ${displayNumber}: ${q.text || ''}\n`;
+    if (opts.includeImageNote && Array.isArray(q.images) && q.images.length > 0) {
+      out += `  [${q.images.length} image(s) jointe(s) pour cette question]\n`;
+    }
+
+    const meta = _getNormalizedQuestionMeta(q);
+    const rawType = meta.rawType || meta.normType;
+    const qType = meta.normType;
+    const qOptions = meta.options;
+    const qSelects = meta.selects;
+    const qDraggables = meta.draggables;
+    const qDropTargets = meta.dropTargets;
+
+    if (rawType === 'radio' || rawType === 'checkbox' || qType === 'single_choice' || qType === 'multi_choice') {
+      const isSingle = rawType === 'radio' || qType === 'single_choice';
+      out += `Type: Choix ${isSingle ? 'unique' : 'multiple'}\n`;
+      out += `Options:\n`;
+      for (let optIdx = 0; optIdx < qOptions.length; optIdx++) {
+        out += `  ${optIdx + 1}. ${qOptions[optIdx].text}\n`;
+      }
+    } else if (rawType === 'select_matching' || qType === 'select_matching' || qSelects.length > 0) {
+      if (qSelects.length === 1) {
+        const singleOpts = (Array.isArray(qSelects[0].options) && qSelects[0].options.length > 0)
+          ? qSelects[0].options
+          : qOptions;
+        out += `Type: Choix unique (menu déroulant — réponds avec type="radio" et <option_index>)\n`;
+        out += `Options:\n`;
+        for (let optIdx = 0; optIdx < singleOpts.length; optIdx++) {
+          out += `  ${optIdx + 1}. ${singleOpts[optIdx].text}\n`;
+        }
+      } else if (qSelects.length > 1) {
+        out += `Type: Association par menus déroulants (réponds avec type="text" et <text_reply> en séparant chaque choix par " | " dans l'ordre des paires)\n`;
+        out += `Paires à associer:\n`;
+        for (let sIdx = 0; sIdx < qSelects.length; sIdx++) {
+          const sel = qSelects[sIdx] || {};
+          const selOpts = Array.isArray(sel.options) ? sel.options.map(o => o.text).join(' | ') : '';
+          out += `  ${sIdx + 1}. ${sel.label || `Élément ${sIdx + 1}`}: ${selOpts}\n`;
+        }
+      } else if (qOptions.length > 0) {
+        out += `Type: Choix unique (menu déroulant — réponds avec type="radio" et <option_index>)\n`;
+        out += `Options:\n`;
+        for (let optIdx = 0; optIdx < qOptions.length; optIdx++) {
+          out += `  ${optIdx + 1}. ${qOptions[optIdx].text}\n`;
+        }
+      } else {
+        out += `Type: Réponse textuelle\n`;
+      }
+    } else if (meta.isDragDrop) {
+      const drags = meta.effectiveOptions;
+      out += `Type: Glisser-déposer (réponds avec type="checkbox" <option_indices> pour les éléments à placer et/ou type="text" <text_reply> au format "Élément -> Cible | ...")\n`;
+      if (drags.length > 0) {
+        out += `Éléments déplaçables:\n`;
+        for (let dIdx = 0; dIdx < drags.length; dIdx++) {
+          out += `  ${dIdx + 1}. ${drags[dIdx].text}\n`;
+        }
+      }
+      if (qDropTargets.length > 0) {
+        out += `Zones cibles:\n`;
+        for (let tIdx = 0; tIdx < qDropTargets.length; tIdx++) {
+          out += `  ${tIdx + 1}. ${qDropTargets[tIdx].label || qDropTargets[tIdx].text || `Cible ${tIdx + 1}`}\n`;
+        }
+      }
+    } else if (qType === 'fill_blank' && Array.isArray(q.blanks) && q.blanks.length > 1) {
+      out += `Type: Texte à trous (${q.blanks.length} champs — réponds avec type="text" et sépare chaque réponse par " | " dans <text_reply>)\n`;
+    } else {
+      out += `Type: Réponse textuelle\n`;
+    }
+    return out;
+  }
+
+  /**
+   * Associe un texte de réponse aux index d'options/éléments correspondants.
+   */
+  function _matchOptionIndexByText(question, rawText, matchAll = false) {
+    if (!question || !rawText) return [];
+    const opts = _getNormalizedQuestionMeta(question).effectiveOptions;
+    if (opts.length === 0) return [];
+
+    const cleanExact = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanSpaced = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const isBoundaryContain = (aSpaced, bSpaced) => {
+      if (!aSpaced || !bSpaced || aSpaced.length < 2 || bSpaced.length < 2) return false;
+      return (` ${aSpaced} `).includes(` ${bSpaced} `) || (` ${bSpaced} `).includes(` ${aSpaced} `);
+    };
+
+    const findMatchesForToken = (tok, singleMode) => {
+      const tokLower = String(tok || '').toLowerCase().trim();
+      const tokClean = cleanExact(tok);
+      const tokSpaced = cleanSpaced(tok);
+      if (!tokClean && !tokLower) return [];
+
+      // Pass 0: strict trimmed lowercase equality across all options/values (preserves C++ vs C#, 2+2 vs 2*2)
+      const strictHits = [];
+      for (let optIdx = 0; optIdx < opts.length; optIdx++) {
+        const opt = opts[optIdx];
+        if (!opt) continue;
+        const optRawLower = String(opt.text || '').toLowerCase().trim();
+        const optValLower = String(opt.value || '').toLowerCase().trim();
+        if (tokLower && ((optRawLower && optRawLower === tokLower) || (optValLower && optValLower === tokLower))) {
+          strictHits.push(optIdx);
+          if (singleMode) return [optIdx];
+        }
+      }
+      if (strictHits.length > 0) return strictHits;
+
+      // Pass 1: alphanumeric-normalized equality (only when Pass 0 found zero strict matches)
+      if (tokClean && tokClean.length >= 2) {
+        const cleanHits = [];
+        for (let optIdx = 0; optIdx < opts.length; optIdx++) {
+          const opt = opts[optIdx];
+          if (!opt) continue;
+          const optTextClean = cleanExact(opt.text);
+          const optValClean = cleanExact(opt.value);
+          if (optTextClean === tokClean || optValClean === tokClean) {
+            cleanHits.push(optIdx);
+            if (singleMode) return [optIdx];
+          }
+        }
+        if (cleanHits.length > 0) return cleanHits;
+      }
+
+      // Pass 2: word-boundary containment fallback (only when Pass 0 & Pass 1 found zero hits)
+      if (!tokSpaced || tokSpaced.length < 2) return [];
+      const boundaryHits = [];
+      let bestIdx = -1;
+      let bestLen = -1;
+      for (let optIdx = 0; optIdx < opts.length; optIdx++) {
+        const opt = opts[optIdx];
+        if (!opt) continue;
+        const optSpaced = cleanSpaced(opt.text);
+        if (isBoundaryContain(tokSpaced, optSpaced)) {
+          boundaryHits.push(optIdx);
+          if (optSpaced.length > bestLen) {
+            bestLen = optSpaced.length;
+            bestIdx = optIdx;
+          }
+        }
+      }
+      if (singleMode) {
+        return bestIdx >= 0 ? [bestIdx] : [];
+      }
+      return boundaryHits;
+    };
+
+    if (matchAll) {
+      const segments = String(rawText)
+        .split(/[|;\n]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const lhsTokens = [];
+      for (const seg of segments) {
+        const arrowParts = seg.split(/->|=>/);
+        const lhs = (arrowParts.length > 1 ? arrowParts[0] : seg.split(':')[0]).trim();
+        if (lhs) lhsTokens.push(lhs);
+      }
+      if (lhsTokens.length === 0) lhsTokens.push(String(rawText));
+
+      const matched = [];
+      const seen = new Set();
+      const collectFromList = (tokenList) => {
+        for (const tok of tokenList) {
+          for (const optIdx of findMatchesForToken(tok, false)) {
+            if (!seen.has(optIdx)) {
+              seen.add(optIdx);
+              matched.push(optIdx);
+            }
+          }
+        }
+      };
+
+      collectFromList(lhsTokens);
+      if (matched.length === 0 && segments.length > 0) {
+        collectFromList(segments);
+      }
+      return matched;
+    }
+
+    return findMatchesForToken(rawText, true);
+  }
+
+  /**
    * Compare de façon normalisée la réponse primaire et la réponse secondaire.
    */
   function _answersAgree(primaryAns, secondaryAns, question) {
@@ -325,14 +546,6 @@ const BackgroundAgent = (() => {
     const pOpts = Array.isArray(primaryAns.optionIndices) ? [...new Set(primaryAns.optionIndices)].sort((a, b) => a - b) : [];
     const sOpts = Array.isArray(secondaryAns.optionIndices) ? [...new Set(secondaryAns.optionIndices)].sort((a, b) => a - b) : [];
 
-    const isChoiceQuestion = question && (question.type === 'radio' || question.type === 'checkbox' || (Array.isArray(question.options) && question.options.length > 0));
-    if (isChoiceQuestion || (pOpts.length > 0 && sOpts.length > 0)) {
-      if (pOpts.length === 0 || sOpts.length === 0 || pOpts.length !== sOpts.length) {
-        return false;
-      }
-      return pOpts.every((val, idx) => val === sOpts[idx]);
-    }
-
     const normText = (txt) => String(txt || '')
       .toLowerCase()
       .trim()
@@ -340,7 +553,28 @@ const BackgroundAgent = (() => {
       .replace(/[.,;:!?]+$/, '');
     const pText = normText(primaryAns.textAnswer);
     const sText = normText(secondaryAns.textAnswer);
-    return pText.length > 0 && pText === sText;
+
+    const meta = _getNormalizedQuestionMeta(question);
+    if (meta.isDragDrop && pText.length > 0 && sText.length > 0) {
+      return pText === sText;
+    }
+
+    const isPureChoice = question && !meta.isMultiSelectMatching && !meta.isDragDrop && !meta.isTextLike &&
+      (meta.rawType === 'radio' || meta.rawType === 'checkbox' || meta.normType === 'single_choice' || meta.normType === 'multi_choice' || meta.options.length > 0);
+    if (isPureChoice || (!meta.isDragDrop && !meta.isTextLike && pOpts.length > 0 && sOpts.length > 0)) {
+      if (pOpts.length === 0 || sOpts.length === 0 || pOpts.length !== sOpts.length) {
+        return false;
+      }
+      return pOpts.every((val, idx) => val === sOpts[idx]);
+    }
+
+    if (pText.length > 0 && sText.length > 0) {
+      return pText === sText;
+    }
+    if (meta.isDragDrop && pOpts.length > 0 && sOpts.length > 0) {
+      return pOpts.length === sOpts.length && pOpts.every((val, idx) => val === sOpts[idx]);
+    }
+    return false;
   }
 
   /**
@@ -362,16 +596,7 @@ const BackgroundAgent = (() => {
     if (searchEvidence && typeof searchEvidence === 'string' && searchEvidence.trim().length > 0) {
       usr += `WEB EVIDENCE:\n${searchEvidence.trim().slice(0, 1500)}\n\n`;
     }
-    usr += `Question 1: ${question.text || ''}\n`;
-    if (question.type === 'radio' || question.type === 'checkbox') {
-      usr += `Type: Choix ${question.type === 'radio' ? 'unique' : 'multiple'}\nOptions:\n`;
-      const opts = Array.isArray(question.options) ? question.options : [];
-      for (let i = 0; i < opts.length; i++) {
-        usr += `  ${i + 1}. ${opts[i].text}\n`;
-      }
-    } else {
-      usr += `Type: Réponse textuelle\n`;
-    }
+    usr += _formatQuestionForPrompt({ ...question, index: 1 }, 1, { includeImageNote: false });
     usr += '\nVerify and return the exact answer in <quiz_answers> XML format.';
     return { system: sys, user: usr };
   }
@@ -584,10 +809,13 @@ const BackgroundAgent = (() => {
               const parsed = _parseAIResponse(resp?.text || '', [singleQ]);
               if (parsed.length > 0) {
                 const candidateAns = normalizeAnswerEntry(parsed[0]);
-                const isChoiceQ = singleQ.type === 'radio' || singleQ.type === 'checkbox' || (Array.isArray(singleQ.options) && singleQ.options.length > 0);
-                const hasActionable = isChoiceQ
-                  ? (candidateAns.optionIndices.length > 0 && (!Array.isArray(singleQ.options) || singleQ.options.length === 0 || candidateAns.optionIndices.every(i => i >= 0 && i < singleQ.options.length)))
-                  : (typeof candidateAns.textAnswer === 'string' && candidateAns.textAnswer.trim().length > 0);
+                const meta = _getNormalizedQuestionMeta(singleQ);
+                const isPureChoice = !meta.isMultiSelectMatching && !meta.isDragDrop && !meta.isTextLike &&
+                  (meta.rawType === 'radio' || meta.rawType === 'checkbox' || meta.normType === 'single_choice' || meta.normType === 'multi_choice' || meta.options.length > 0);
+                const hasValidIndices = candidateAns.optionIndices.length > 0 &&
+                  (meta.effectiveOptions.length === 0 || candidateAns.optionIndices.every(i => i >= 0 && i < meta.effectiveOptions.length));
+                const hasText = typeof candidateAns.textAnswer === 'string' && candidateAns.textAnswer.trim().length > 0;
+                const hasActionable = isPureChoice ? hasValidIndices : (hasValidIndices || hasText);
                 if (hasActionable) {
                   secAns = candidateAns;
                   usedProvider = secProvider;
@@ -677,8 +905,8 @@ const BackgroundAgent = (() => {
     let totalChars = 0;
     for (const q of task.questions) {
       totalChars += (q.text || '').length;
-      if (q.type === 'text') {
-        score += 2; // +2 par question ouverte
+      if (_getNormalizedQuestionMeta(q).isTextLike) {
+        score += 2; // +2 par question ouverte / texte à trous
       }
     }
     if (totalChars > 1000) {
@@ -1108,6 +1336,16 @@ const BackgroundAgent = (() => {
       };
     } finally {
       clearTimeout(globalTimer);
+      try {
+        const qp = typeof QuizProviders !== 'undefined' ? QuizProviders : (typeof globalThis !== 'undefined' ? globalThis.QuizProviders : null);
+        const analytics = qp && qp.ProviderAnalytics ? qp.ProviderAnalytics : null;
+        if (analytics && typeof analytics.flush === 'function' && typeof analytics.getStats === 'function') {
+          const curStats = analytics.getStats();
+          if (curStats && curStats.totals && curStats.totals.requests > 0) {
+            await analytics.flush();
+          }
+        }
+      } catch (_) { /* non-blocking telemetry flush */ }
     }
   }
 
@@ -1735,7 +1973,10 @@ const BackgroundAgent = (() => {
     }
 
     let lastError = null;
+    const qpRef = typeof QuizProviders !== 'undefined' ? QuizProviders : (typeof globalThis !== 'undefined' ? globalThis.QuizProviders : null);
+    const analytics = qpRef && qpRef.ProviderAnalytics ? qpRef.ProviderAnalytics : null;
     for (const candidateModel of candidateModels) {
+      const startedAt = Date.now();
       try {
         if (candidateModel !== model) {
           console.warn(`🔄 Fallback modèle interne: essai de ${candidateModel} car ${model} a échoué`);
@@ -1748,9 +1989,28 @@ const BackgroundAgent = (() => {
         } else {
           result = await _callOpenAIWithTools(normalizedKey, apiKey, candidateModel, history, images, tools, signal);
         }
+        if (analytics && typeof analytics.record === 'function') {
+          analytics.record({
+            provider: normalizedKey,
+            model: candidateModel,
+            ok: true,
+            latencyMs: Date.now() - startedAt,
+            status: 200
+          });
+        }
         return { ...result, model: candidateModel };
       } catch (err) {
         console.error(`❌ Échec du modèle ${candidateModel} sur ${normalizedKey}:`, err.message);
+        if (analytics && typeof analytics.record === 'function' && !(signal && signal.aborted)) {
+          analytics.record({
+            provider: normalizedKey,
+            model: candidateModel,
+            ok: false,
+            latencyMs: Date.now() - startedAt,
+            status: err && typeof err.status === 'number' ? err.status : undefined,
+            error: err
+          });
+        }
         lastError = err;
         if (signal && signal.aborted) {
           throw err;
@@ -1831,7 +2091,9 @@ const BackgroundAgent = (() => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Erreur OpenAI API: HTTP ${response.status}`);
+      const apiErr = new Error(err.error?.message || `Erreur OpenAI API: HTTP ${response.status}`);
+      apiErr.status = response.status;
+      throw apiErr;
     }
 
     const data = await response.json();
@@ -1913,7 +2175,9 @@ const BackgroundAgent = (() => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Erreur Claude API: HTTP ${response.status}`);
+      const apiErr = new Error(err.error?.message || `Erreur Claude API: HTTP ${response.status}`);
+      apiErr.status = response.status;
+      throw apiErr;
     }
 
     const data = await response.json();
@@ -1992,7 +2256,9 @@ const BackgroundAgent = (() => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Erreur Gemini API: HTTP ${response.status}`);
+      const apiErr = new Error(err.error?.message || `Erreur Gemini API: HTTP ${response.status}`);
+      apiErr.status = response.status;
+      throw apiErr;
     }
 
     const data = await response.json();
@@ -2021,37 +2287,53 @@ const BackgroundAgent = (() => {
   // ────────────────────────────────────────────────
 
   function _mapToolAnswersToParsedAnswers(toolAnswers, questions) {
+    if (!Array.isArray(toolAnswers) || !Array.isArray(questions)) return [];
     const parsed = [];
     for (const item of toolAnswers) {
       if (!item || typeof item !== 'object') continue;
-      const idx = item.questionIndex;
-      const question = questions.find((q, qPos) => ((typeof q.index === 'number' ? q.index - 1 : qPos) === idx));
+      const rawIdx = typeof item.questionIndex === 'number'
+        ? item.questionIndex
+        : parseInt(item.questionIndex, 10);
+      if (!Number.isInteger(rawIdx) || rawIdx < 0) continue;
+      const question = (rawIdx < questions.length && questions[rawIdx])
+        ? questions[rawIdx]
+        : questions.find((q, qPos) => q && ((typeof q.index === 'number' ? q.index - 1 : qPos) === rawIdx));
       if (!question) continue;
+      const idx = typeof question.index === 'number' ? question.index - 1 : rawIdx;
 
       const userAns = Array.isArray(item.answers) ? item.answers : [item.answers];
       const explanation = item.explanation || '';
       const confidence = item.confidence;
 
-      if (question.type === 'text') {
+      const meta = _getNormalizedQuestionMeta(question);
+      const isDragDrop = meta.isDragDrop;
+
+      if (meta.isTextLike || meta.isMultiSelectMatching) {
+        const joinedText = userAns
+          .map(v => (v === undefined || v === null ? '' : String(v).trim()))
+          .filter(Boolean)
+          .join(' | ');
         parsed.push(normalizeAnswerEntry({
           questionIndex: idx,
           raw: JSON.stringify(item),
           optionIndices: [],
-          textAnswer: userAns[0] || '',
+          textAnswer: joinedText,
           confidence,
           explanation
         }));
-      } else if (question.options && question.options.length > 0) {
+      } else if (meta.effectiveOptions.length > 0 || isDragDrop) {
         const optionIndices = [];
+        const textParts = [];
+        const qOptions = meta.effectiveOptions;
 
         for (const val of userAns) {
-          if (typeof val === 'number' && Number.isInteger(val) && val >= 0 && val < question.options.length) {
+          if (typeof val === 'number' && Number.isInteger(val) && val >= 0 && val < qOptions.length) {
             optionIndices.push(val);
             continue;
           }
           if (typeof val === 'string' && /^\s*\d+\s*$/.test(val)) {
             const numeric = parseInt(val.trim(), 10);
-            if (!isNaN(numeric) && numeric >= 0 && numeric < question.options.length) {
+            if (!isNaN(numeric) && numeric >= 0 && numeric < qOptions.length) {
               optionIndices.push(numeric);
               continue;
             }
@@ -2059,32 +2341,31 @@ const BackgroundAgent = (() => {
 
           if (typeof val === 'string' && val.length === 1) {
             const code = val.toUpperCase().charCodeAt(0) - 65;
-            if (code >= 0 && code < question.options.length) {
+            if (code >= 0 && code < qOptions.length) {
               optionIndices.push(code);
               continue;
             }
           }
 
           if (typeof val === 'string') {
-            const valClean = val.toLowerCase().replace(/[^a-z0-9]/g, '');
-            let matched = false;
-            for (let optIdx = 0; optIdx < question.options.length; optIdx++) {
-              const optClean = question.options[optIdx].text.toLowerCase().replace(/[^a-z0-9]/g, '');
-              if (optClean && (valClean.includes(optClean) || optClean.includes(valClean))) {
-                optionIndices.push(optIdx);
-                matched = true;
-                break;
+            textParts.push(val.trim());
+            const textMatches = _matchOptionIndexByText(question, val, isDragDrop);
+            for (const mIdx of textMatches) {
+              if (!optionIndices.includes(mIdx)) {
+                optionIndices.push(mIdx);
               }
             }
-            if (matched) continue;
           }
         }
 
+        const joinedFallbackText = textParts.filter(Boolean).join(' | ');
         parsed.push(normalizeAnswerEntry({
           questionIndex: idx,
           raw: JSON.stringify(item),
           optionIndices: optionIndices,
-          textAnswer: optionIndices.length === 0 ? (userAns[0] || '') : null,
+          textAnswer: isDragDrop
+            ? (joinedFallbackText || null)
+            : (optionIndices.length === 0 ? (joinedFallbackText || userAns[0] || '') : null),
           confidence,
           explanation
         }));
@@ -2361,22 +2642,7 @@ const BackgroundAgent = (() => {
     userPrompt += `QUESTIONS:\n\n`;
 
     for (let idx = 0; idx < quizData.questions.length; idx++) {
-      const q = quizData.questions[idx];
-      userPrompt += `Question ${idx + 1}: ${q.text}\n`;
-
-      if (q.images && q.images.length > 0) {
-        userPrompt += `  [${q.images.length} image(s) jointe(s) pour cette question]\n`;
-      }
-
-      if (q.type === 'radio' || q.type === 'checkbox') {
-        userPrompt += `Type: Choix ${q.type === 'radio' ? 'unique' : 'multiple'}\n`;
-        userPrompt += `Options:\n`;
-        for (let optIdx = 0; optIdx < q.options.length; optIdx++) {
-          userPrompt += `  ${optIdx + 1}. ${q.options[optIdx].text}\n`;
-        }
-      } else if (q.type === 'text') {
-        userPrompt += `Type: Réponse textuelle\n`;
-      }
+      userPrompt += _formatQuestionForPrompt(quizData.questions[idx], idx + 1, { includeImageNote: true });
       userPrompt += `\n`;
     }
 
@@ -2415,8 +2681,23 @@ const BackgroundAgent = (() => {
 
       for (const q of questionsList) {
         let qTokens = _estimateTokens(q.text);
-        for (const opt of q.options) {
-          qTokens += _estimateTokens(opt.text);
+        if (Array.isArray(q.options)) {
+          for (const opt of q.options) {
+            qTokens += _estimateTokens(opt && opt.text);
+          }
+        }
+        if (Array.isArray(q.selects)) {
+          for (const sel of q.selects) {
+            qTokens += _estimateTokens(sel && sel.label);
+            if (sel && Array.isArray(sel.options)) {
+              for (const so of sel.options) qTokens += _estimateTokens(so && so.text);
+            }
+          }
+        }
+        if (Array.isArray(q.dropTargets)) {
+          for (const dt of q.dropTargets) {
+            qTokens += _estimateTokens((dt && (dt.label || dt.text)) || '');
+          }
         }
         if (q.images) {
           for (const img of q.images) {
@@ -2452,10 +2733,9 @@ const BackgroundAgent = (() => {
     const getGlobalIdx = (q, fallbackPos) => (q && typeof q.index === 'number' ? q.index - 1 : fallbackPos);
     const isValidOptionIndex = (q, idx) => {
       if (!Number.isInteger(idx) || idx < 0) return false;
-      if (Array.isArray(q.options) && q.options.length > 0) {
-        return idx < q.options.length;
-      }
-      return true;
+      const qMeta = _getNormalizedQuestionMeta(q);
+      if (qMeta.isTextLike) return false;
+      return qMeta.effectiveOptions.length > 0 && idx < qMeta.effectiveOptions.length;
     };
 
     // NIVEAU 1: XML
@@ -2476,7 +2756,14 @@ const BackgroundAgent = (() => {
         const question = questions[questionNum];
         if (!question) { continue; }
 
-        const type = (typeMatch ? typeMatch[1] : (question.type || 'radio')).toLowerCase();
+        const qMeta = _getNormalizedQuestionMeta(question);
+        const rawTypeAttr = (typeMatch ? typeMatch[1] : (qMeta.rawType || qMeta.normType || 'radio')).trim().toLowerCase();
+        const typeAliasMap = {
+          single_choice: 'radio',
+          multi_choice: 'checkbox',
+          fill_blank: 'text'
+        };
+        const type = typeAliasMap[rawTypeAttr] || rawTypeAttr;
         const globalIdx = getGlobalIdx(question, questionNum);
 
         // Extraction de confidence et explanation
@@ -2492,6 +2779,8 @@ const BackgroundAgent = (() => {
           explanation = explanationMatch[1].trim();
         }
 
+        const isSingleSelectMatching = qMeta.isSingleSelectMatching;
+
         if (type === 'radio') {
           const optIdxMatch = inner.match(/<option_index>\s*(\d+)\s*<\/option_index>/i);
           if (optIdxMatch) {
@@ -2506,39 +2795,175 @@ const BackgroundAgent = (() => {
                 explanation
               };
             }
+          } else {
+            const textMatch = inner.match(/<text_reply>([\s\S]*?)<\/text_reply>/i);
+            if (textMatch) {
+              const txt = textMatch[1].trim();
+              const matched = isSingleSelectMatching ? _matchOptionIndexByText(question, txt) : [];
+              if (matched.length > 0 || (isSingleSelectMatching && txt.length > 0)) {
+                answers[globalIdx] = {
+                  questionIndex: globalIdx,
+                  raw: textMatch[0],
+                  optionIndices: matched,
+                  textAnswer: txt,
+                  confidence,
+                  explanation
+                };
+              }
+            }
           }
         } else if (type === 'checkbox') {
           const optIndicesMatch = inner.match(/<option_indices>\s*([\d,\s]+)\s*<\/option_indices>/i);
+          const singleOptMatch = inner.match(/<option_index>\s*(\d+)\s*<\/option_index>/i);
+          const textMatch = inner.match(/<text_reply>([\s\S]*?)<\/text_reply>/i);
+          const txt = textMatch ? textMatch[1].trim() : null;
+
+          let indices = [];
           if (optIndicesMatch) {
-            const indices = optIndicesMatch[1].split(',')
+            indices = optIndicesMatch[1].split(',')
               .map(n => parseInt(n.trim(), 10) - 1)
               .filter(n => isValidOptionIndex(question, n));
-            if (indices.length > 0) {
+          } else if (singleOptMatch) {
+            const optIdx = parseInt(singleOptMatch[1], 10) - 1;
+            if (isValidOptionIndex(question, optIdx)) {
+              indices = [optIdx];
+            }
+          }
+          if (indices.length === 0 && qMeta.isDragDrop && txt) {
+            indices = _matchOptionIndexByText(question, txt, true);
+          }
+
+          if (indices.length > 0 || (qMeta.isDragDrop && txt && txt.length > 0)) {
+            answers[globalIdx] = {
+              questionIndex: globalIdx,
+              raw: (optIndicesMatch || singleOptMatch || textMatch)[0],
+              optionIndices: indices,
+              textAnswer: (txt && txt.length > 0) ? txt : null,
+              confidence,
+              explanation
+            };
+          }
+        } else if (type === 'select_matching' || type === 'drag_drop') {
+          const optIndicesMatch = inner.match(/<option_indices>\s*([\d,\s]+)\s*<\/option_indices>/i);
+          const optIdxMatch = inner.match(/<option_index>\s*(\d+)\s*<\/option_index>/i);
+          const textMatch = inner.match(/<text_reply>([\s\S]*?)<\/text_reply>/i);
+
+          let indices = [];
+          if (optIndicesMatch) {
+            indices = optIndicesMatch[1].split(',')
+              .map(n => parseInt(n.trim(), 10) - 1)
+              .filter(n => isValidOptionIndex(question, n));
+          } else if (optIdxMatch) {
+            const optIdx = parseInt(optIdxMatch[1], 10) - 1;
+            if (isValidOptionIndex(question, optIdx)) {
+              indices = [optIdx];
+            }
+          }
+
+          const txt = textMatch ? textMatch[1].trim() : null;
+          const isDragMulti = type === 'drag_drop' || qMeta.isDragDrop;
+          if (indices.length === 0 && txt && (isDragMulti || isSingleSelectMatching)) {
+            indices = _matchOptionIndexByText(question, txt, isDragMulti);
+          }
+
+          if (indices.length > 0 || (txt && txt.length > 0)) {
+            answers[globalIdx] = {
+              questionIndex: globalIdx,
+              raw: (optIndicesMatch || optIdxMatch || textMatch)[0],
+              optionIndices: indices,
+              textAnswer: (txt && txt.length > 0) ? txt : null,
+              confidence,
+              explanation
+            };
+          }
+        } else if (type === 'text') {
+          const textMatch = inner.match(/<text_reply>([\s\S]*?)<\/text_reply>/i);
+          if (textMatch) {
+            const txt = textMatch[1].trim();
+            const matched = qMeta.isDragDrop
+              ? _matchOptionIndexByText(question, txt, true)
+              : (isSingleSelectMatching ? _matchOptionIndexByText(question, txt, false) : []);
+            if (txt.length > 0 || matched.length > 0) {
               answers[globalIdx] = {
                 questionIndex: globalIdx,
-                raw: optIndicesMatch[0],
-                optionIndices: indices,
-                textAnswer: null,
+                raw: textMatch[0],
+                optionIndices: matched,
+                textAnswer: txt,
                 confidence,
                 explanation
               };
             }
           }
-        } else if (type === 'text') {
-          const textMatch = inner.match(/<text_reply>([\s\S]*?)<\/text_reply>/i);
-          if (textMatch) {
-            answers[globalIdx] = {
-              questionIndex: globalIdx,
-              raw: textMatch[0],
-              optionIndices: [],
-              textAnswer: textMatch[1].trim(),
-              confidence,
-              explanation
-            };
-          }
         }
       }
     }
+
+    const parseFallbackOptionIndices = (text, question, qMeta) => {
+      const trimmed = String(text || '').trim();
+      const opts = qMeta.effectiveOptions;
+      if (!trimmed) return [];
+
+      const isSingleChoice = !qMeta.isDragDrop && qMeta.rawType !== 'checkbox' && qMeta.normType !== 'multi_choice';
+      const trimmedLower = trimmed.toLowerCase();
+
+      // Strict raw text/value check before numeric splitting (protects "1/2", "1 + 2", "C++")
+      if (opts.length > 0 && !/^\d+$/.test(trimmed)) {
+        const directExact = [];
+        for (let optIdx = 0; optIdx < opts.length; optIdx++) {
+          const opt = opts[optIdx];
+          if (!opt) continue;
+          const optRawLower = String(opt.text || '').toLowerCase().trim();
+          const optValLower = String(opt.value || '').toLowerCase().trim();
+          if ((optRawLower && optRawLower === trimmedLower) || (optValLower && optValLower === trimmedLower)) {
+            directExact.push(optIdx);
+            if (isSingleChoice) return [optIdx];
+          }
+        }
+        if (directExact.length > 0) return directExact;
+      }
+
+      let optionIndices = [];
+
+      // Case A: standalone numeric index / list (never split unprefixed fractions/expressions like "1/2" or "1 + 2")
+      const standalonePattern = isSingleChoice
+        ? /^(?:(?:option|answer|r[eé]ponse|choix)\s*[:#]?\s*)?(\d+)\s*[.)]?$/i
+        : /^(?:(?:options|answers|r[eé]ponses|choix)\s*[:#]?\s*(\d+(?:\s*(?:,|;|\/|et|and|\+)\s*\d+)*)|(?:(?:option|answer|r[eé]ponse|choix)\s*[:#]?\s*)?(\d+(?:\s*(?:,|;|et|and)\s*\d+)*))\s*[.)]?$/i;
+      const standaloneNums = trimmed.match(standalonePattern);
+      if (standaloneNums) {
+        const numGroup = standaloneNums[1] || standaloneNums[2] || '';
+        const nums = numGroup.match(/\d+/g) || [];
+        optionIndices = nums.map(n => parseInt(n, 10) - 1).filter(n => isValidOptionIndex(question, n));
+      }
+
+      // Case B: standalone letter A-G
+      if (optionIndices.length === 0 && opts.length > 0) {
+        const letterMatch = trimmed.match(/^(?:(?:option|answer|r[eé]ponse|choix)\s*[:#]?\s*)?([A-G])(?:\s*[.)])?$/i);
+        if (letterMatch) {
+          const code = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
+          if (code >= 0 && code < opts.length) {
+            optionIndices = [code];
+          }
+        }
+      }
+
+      // Case C: text matching (runs before scraping numbers from text like IPv4 / HTTP/2 / Layer 3)
+      if (optionIndices.length === 0 && opts.length > 0) {
+        const multiTextMatch = qMeta.isDragDrop || qMeta.rawType === 'checkbox' || qMeta.normType === 'multi_choice';
+        optionIndices = _matchOptionIndexByText(question, trimmed, multiTextMatch);
+      }
+
+      // Case D: explicit labelled option numbers (e.g. "The answer is option 2")
+      if (optionIndices.length === 0 && !(qMeta.isDragDrop && /->|=>/.test(trimmed))) {
+        const explicitMatches = Array.from(trimmed.matchAll(/(?:option|choix|index|#)\s*(\d+)/gi));
+        if (explicitMatches.length > 0) {
+          optionIndices = explicitMatches
+            .map(m => parseInt(m[1], 10) - 1)
+            .filter(n => isValidOptionIndex(question, n));
+        }
+      }
+
+      return [...new Set(optionIndices)];
+    };
 
     // NIVEAU 2: Regex de lignes
     const missingIndices = questions.map((_, idx) => idx).filter(idx => !answers[getGlobalIdx(questions[idx], idx)]);
@@ -2556,7 +2981,8 @@ const BackgroundAgent = (() => {
         const globalIdx = getGlobalIdx(question, questionNum);
         if (answers[globalIdx]) { continue; }
 
-        if (question.type === 'text') {
+        const qMeta = _getNormalizedQuestionMeta(question);
+        if (qMeta.isTextLike || qMeta.isMultiSelectMatching) {
           answers[globalIdx] = {
             questionIndex: globalIdx,
             raw: rawAnswer,
@@ -2566,37 +2992,12 @@ const BackgroundAgent = (() => {
             explanation: ''
           };
         } else {
-          const numbers = rawAnswer.match(/\d+/g);
-          let optionIndices = numbers
-            ? numbers.map(n => parseInt(n, 10) - 1).filter(n => isValidOptionIndex(question, n))
-            : [];
-
-          if (optionIndices.length === 0 && question.options && question.options.length > 0) {
-            const letterMatch = rawAnswer.match(/^[A-G]$/i) || rawAnswer.match(/^option\s+([A-G])$/i);
-            if (letterMatch) {
-              const letter = (letterMatch[1] || letterMatch[0]).toUpperCase();
-              const code = letter.charCodeAt(0) - 65;
-              if (code >= 0 && code < question.options.length) {
-                optionIndices.push(code);
-              }
-            }
-          }
-
-          if (optionIndices.length === 0 && question.options && question.options.length > 0) {
-            const cleanAns = rawAnswer.toLowerCase().replace(/[^a-z0-9]/g, '');
-            for (let oIdx = 0; oIdx < question.options.length; oIdx++) {
-              const cleanOpt = question.options[oIdx].text.toLowerCase().replace(/[^a-z0-9]/g, '');
-              if (cleanOpt && (cleanAns.includes(cleanOpt) || cleanOpt.includes(cleanAns))) {
-                optionIndices.push(oIdx);
-              }
-            }
-          }
-
+          const optionIndices = parseFallbackOptionIndices(rawAnswer, question, qMeta);
           answers[globalIdx] = {
             questionIndex: globalIdx,
             raw: rawAnswer,
             optionIndices: optionIndices,
-            textAnswer: optionIndices.length === 0 ? rawAnswer : null,
+            textAnswer: (optionIndices.length === 0 || qMeta.isDragDrop) ? rawAnswer : null,
             confidence: 50,
             explanation: ''
           };
@@ -2618,40 +3019,28 @@ const BackgroundAgent = (() => {
         if (!textBlockMatch) { continue; }
 
         const blockText = textBlockMatch[0];
+        const bodyText = blockText.replace(/^(?:Question|Q)\s*\d+\s*[.:)-]?\s*/i, '').trim();
 
-        if (question.type === 'text') {
-          const textAns = blockText.replace(/^(?:Question|Q)\s*\d+[\s\S]*?[.:)-]/i, '').trim();
-          if (textAns) {
+        const qMeta = _getNormalizedQuestionMeta(question);
+        if (qMeta.isTextLike || qMeta.isMultiSelectMatching) {
+          if (bodyText) {
             answers[globalIdx] = {
               questionIndex: globalIdx,
               raw: blockText,
               optionIndices: [],
-              textAnswer: textAns,
+              textAnswer: bodyText,
               confidence: 50,
               explanation: ''
             };
           }
-        } else if (question.options && question.options.length > 0) {
-          const numbers = blockText.match(/\d+/g);
-          let optionIndices = numbers
-            ? numbers.map(n => parseInt(n) - 1).filter(n => n >= 0 && n < question.options.length)
-            : [];
-
-          if (optionIndices.length === 0) {
-            for (let oIdx = 0; oIdx < question.options.length; oIdx++) {
-              const optClean = question.options[oIdx].text.toLowerCase().replace(/[^a-z0-9]/g, '');
-              if (optClean && blockText.toLowerCase().replace(/[^a-z0-9]/g, '').includes(optClean)) {
-                optionIndices.push(oIdx);
-              }
-            }
-          }
-
-          if (optionIndices.length > 0) {
+        } else if (qMeta.effectiveOptions.length > 0) {
+          const optionIndices = parseFallbackOptionIndices(bodyText, question, qMeta);
+          if (optionIndices.length > 0 || (qMeta.isDragDrop && bodyText.length > 0)) {
             answers[globalIdx] = {
               questionIndex: globalIdx,
               raw: blockText,
               optionIndices: optionIndices,
-              textAnswer: null,
+              textAnswer: qMeta.isDragDrop ? (bodyText || null) : null,
               confidence: 50,
               explanation: ''
             };
@@ -2785,7 +3174,13 @@ const BackgroundAgent = (() => {
     applyDomainRules,
     computeConfidenceTier,
     normalizeAnswerEntry,
-    crossValidateAnswers
+    crossValidateAnswers,
+    _formatQuestionForPrompt,
+    _buildPrompt,
+    _parseAIResponse,
+    _callLLMWithTools,
+    _answersAgree,
+    _mapToolAnswersToParsedAnswers
   };
 })();
 
@@ -2806,6 +3201,12 @@ if (typeof module !== 'undefined' && module.exports) {
     applyDomainRules: BackgroundAgent.applyDomainRules,
     computeConfidenceTier: BackgroundAgent.computeConfidenceTier,
     normalizeAnswerEntry: BackgroundAgent.normalizeAnswerEntry,
-    crossValidateAnswers: BackgroundAgent.crossValidateAnswers
+    crossValidateAnswers: BackgroundAgent.crossValidateAnswers,
+    _formatQuestionForPrompt: BackgroundAgent._formatQuestionForPrompt,
+    _buildPrompt: BackgroundAgent._buildPrompt,
+    _parseAIResponse: BackgroundAgent._parseAIResponse,
+    _callLLMWithTools: BackgroundAgent._callLLMWithTools,
+    _answersAgree: BackgroundAgent._answersAgree,
+    _mapToolAnswersToParsedAnswers: BackgroundAgent._mapToolAnswersToParsedAnswers
   };
 }

@@ -7,8 +7,10 @@ const SchemaDetector = (() => {
 
   // Tags to fully ignore when building the skeleton
   const IGNORE_TAGS = new Set([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'LINK', 'META', 'HEAD',
-    'SVG', 'PATH', 'CIRCLE', 'RECT', 'LINE', 'POLYGON',
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'LINK', 'META', 'HEAD', 'TEMPLATE',
+    'SVG', 'PATH', 'CIRCLE', 'RECT', 'LINE', 'POLYGON', 'POLYLINE', 'ELLIPSE',
+    'G', 'DEFS', 'USE', 'SYMBOL', 'CLIPPATH', 'MASK',
+    'LINEARGRADIENT', 'RADIALGRADIENT', 'STOP', 'TITLE', 'DESC',
     'BR', 'HR', 'WBR', 'IFRAME', 'OBJECT', 'EMBED',
     'AUDIO', 'VIDEO', 'SOURCE', 'TRACK'
   ]);
@@ -18,11 +20,174 @@ const SchemaDetector = (() => {
     'NAV', 'HEADER', 'FOOTER', 'ASIDE', 'MENU', 'MENUITEM'
   ]);
 
+  const SKIP_ROLES = new Set([
+    'navigation', 'banner', 'contentinfo', 'complementary', 'search'
+  ]);
+
+  const GENERIC_STEM_RE = /^(?:answers?|options?|choices?|select(?:\s+an?)?\s+(?:answer|option|choice)|choose(?:\s+an?)?\s+(?:answer|option)|your\s+answer|r[eé]ponses?|choix|s[eé]lectionnez\s+une\s+r[eé]ponse)\s*:?$|^(?:question|q)\s*\d+\s*(?:of|sur|\/)\s*\d+\s*:?$/i;
+
   // Max depth for DOM traversal
   const MAX_DEPTH = 15;
 
   // Max nodes in skeleton (to keep LLM payload small)
   const MAX_SKELETON_NODES = 500;
+
+  function isHiddenNode(node) {
+    if (!node) return true;
+    if (node.hidden || node.style?.display === 'none' || node.style?.visibility === 'hidden') {
+      return true;
+    }
+    if (typeof node.getAttribute === 'function' && node.getAttribute('aria-hidden') === 'true') {
+      return true;
+    }
+    if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+      try {
+        const cs = window.getComputedStyle(node);
+        if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) {
+          return true;
+        }
+      } catch (e) { /* detached or mock node */ }
+    }
+    return false;
+  }
+
+  function isInsideNavChrome(el, stopAt) {
+    let curr = el;
+    let steps = 0;
+    while (curr && curr !== stopAt && steps < 40) {
+      const tag = (curr.tagName || '').toUpperCase();
+      if (SKIP_CONTAINERS.has(tag)) return true;
+      const role = typeof curr.getAttribute === 'function'
+        ? (curr.getAttribute('role') || '').toLowerCase()
+        : '';
+      if (SKIP_ROLES.has(role)) return true;
+      if (isHiddenNode(curr)) return true;
+      curr = curr.parentElement;
+      steps++;
+    }
+    return false;
+  }
+
+  function hasSubstantiveStem(node) {
+    if (!node || typeof node.querySelectorAll !== 'function') return false;
+    const candidates = node.querySelectorAll('h1, h2, h3, h4, p, legend, #qtext, .qtext, [class*="question"]');
+    for (const el of candidates) {
+      if (typeof el.closest === 'function' && el.closest('label')) continue;
+      if (isHiddenNode(el)) continue;
+      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (txt.length > 3 && !GENERIC_STEM_RE.test(txt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function computeLCA(nodes, boundary) {
+    if (!Array.isArray(nodes) || nodes.length === 0) return boundary;
+    const getChain = (el) => {
+      const chain = [];
+      let curr = el;
+      let steps = 0;
+      while (curr && steps < 64) {
+        chain.push(curr);
+        if (curr === boundary) break;
+        curr = curr.parentElement;
+        steps++;
+      }
+      return chain;
+    };
+    let shared = getChain(nodes[0]);
+    for (let i = 1; i < nodes.length && shared.length > 0; i++) {
+      const set = new Set(getChain(nodes[i]));
+      shared = shared.filter(n => set.has(n));
+    }
+    const candidate = shared[0];
+    return candidate && candidate.parentElement ? candidate : boundary;
+  }
+
+  /**
+   * Localise la racine pertinente du quiz pour éviter d'épuiser le budget de 500 nœuds
+   * dans les menus/headers de navigation sur des sites chargés (ex: W3Schools).
+   */
+  function findSkeletonRoot(body) {
+    if (!body || typeof body.querySelectorAll !== 'function') return body;
+
+    const findLandmark = () => {
+      if (typeof body.querySelector !== 'function') return null;
+      const lm = body.querySelector('#quizmain, #quizcontainer, main, [role="main"]');
+      return (lm && !isHiddenNode(lm)) ? lm : null;
+    };
+
+    const climbToQuizRoot = (controls) => {
+      let lca = computeLCA(controls, body);
+      let steps = 0;
+      while (lca && lca !== body && lca.parentElement && lca.parentElement !== body && steps < 8 && !hasSubstantiveStem(lca)) {
+        const nextParent = lca.parentElement;
+        const nextTag = (nextParent.tagName || '').toUpperCase();
+        const nextRole = typeof nextParent.getAttribute === 'function'
+          ? (nextParent.getAttribute('role') || '').toLowerCase()
+          : '';
+        if (SKIP_CONTAINERS.has(nextTag) || SKIP_ROLES.has(nextRole)) break;
+        if (typeof nextParent.querySelector === 'function' && nextParent.querySelector('nav, header')) {
+          const totalDescendants = typeof nextParent.querySelectorAll === 'function'
+            ? nextParent.querySelectorAll('*').length
+            : 0;
+          if (totalDescendants > 1500) break;
+        }
+        lca = nextParent;
+        steps++;
+      }
+      return lca;
+    };
+
+    // Prefer genuine choice / ARIA option clusters (never let a lone toolbar <select> hijack the root)
+    const choiceControls = Array.from(
+      body.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], [role="option"]')
+    ).filter(el => !isInsideNavChrome(el, body));
+
+    if (choiceControls.length >= 2) {
+      const lca = climbToQuizRoot(choiceControls);
+      if (lca && lca !== body) {
+        if (hasSubstantiveStem(lca)) {
+          return lca;
+        }
+        const landmark = findLandmark();
+        if (landmark && hasSubstantiveStem(landmark)) {
+          return landmark;
+        }
+        const bodyDescendants = typeof body.querySelectorAll === 'function'
+          ? body.querySelectorAll('*').length
+          : 0;
+        if (hasSubstantiveStem(body) && bodyDescendants <= 1500) {
+          return body;
+        }
+        return lca;
+      }
+    }
+
+    const landmark = findLandmark();
+    if (landmark) {
+      const hasInteractiveOrStem = (typeof landmark.querySelector === 'function' &&
+        Boolean(landmark.querySelector('input, select, textarea, button, [role="option"], [role="radio"], [role="checkbox"]'))) ||
+        hasSubstantiveStem(landmark);
+      if (hasInteractiveOrStem) {
+        return landmark;
+      }
+    }
+
+    const formControls = Array.from(
+      body.querySelectorAll('select, textarea, input[type="text"], input:not([type])')
+    ).filter(el => !isInsideNavChrome(el, body));
+
+    if (formControls.length >= 2) {
+      const lca = climbToQuizRoot(formControls);
+      if (lca && lca !== body && hasSubstantiveStem(lca)) {
+        return lca;
+      }
+    }
+
+    return body;
+  }
 
   // ──────────────────────────────────────────────
   // DOM SKELETON BUILDER
@@ -39,15 +204,17 @@ const SchemaDetector = (() => {
     const body = document.body;
     if (!body) return '';
 
+    const skeletonRoot = findSkeletonRoot(body);
     let nodeCount = 0;
     const lines = [];
+    const ELEMENT_NODE = typeof Node !== 'undefined' ? Node.ELEMENT_NODE : 1;
 
     function walk(node, depth) {
       if (nodeCount >= MAX_SKELETON_NODES) return;
       if (depth > MAX_DEPTH) return;
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (!node || node.nodeType !== ELEMENT_NODE) return;
 
-      const tag = node.tagName;
+      const tag = (node.tagName || '').toUpperCase();
 
       // Skip ignored tags entirely
       if (IGNORE_TAGS.has(tag)) return;
@@ -56,9 +223,17 @@ const SchemaDetector = (() => {
       if (SKIP_CONTAINERS.has(tag) && depth < 4) return;
 
       // Skip hidden elements
-      if (node.hidden || node.style?.display === 'none') return;
-      // Check aria-hidden
-      if (node.getAttribute('aria-hidden') === 'true') return;
+      if (isHiddenNode(node)) return;
+
+      // Skip navigation/chrome ARIA landmarks at shallow depth unless they contain radio/checkbox inputs
+      const role = typeof node.getAttribute === 'function'
+        ? (node.getAttribute('role') || '').toLowerCase()
+        : '';
+      if (SKIP_ROLES.has(role) && depth < 5) {
+        const hasQuizRadios = typeof node.querySelector === 'function' &&
+          Boolean(node.querySelector('input[type="radio"], input[type="checkbox"]'));
+        if (!hasQuizRadios) return;
+      }
 
       // Build compact descriptor
       const attrs = [];
@@ -68,7 +243,7 @@ const SchemaDetector = (() => {
         if (classes) attrs.push(`.${classes}`);
       }
       if (tag === 'INPUT') {
-        const type = node.getAttribute('type') || 'text';
+        const type = (typeof node.getAttribute === 'function' ? node.getAttribute('type') : null) || node.type || 'text';
         attrs.push(`[type=${type}]`);
         if (node.name) attrs.push(`[name=${node.name}]`);
       }
@@ -76,17 +251,20 @@ const SchemaDetector = (() => {
         if (node.name) attrs.push(`[name=${node.name}]`);
       }
       if (tag === 'SELECT') {
-        const optCount = node.querySelectorAll('option').length;
+        const optCount = typeof node.querySelectorAll === 'function' ? node.querySelectorAll('option').length : 0;
         attrs.push(`[options=${optCount}]`);
       }
       // Note click handlers and cursor style (custom quiz elements)
-      if (node.onclick || node.getAttribute('role') === 'button' || node.getAttribute('role') === 'option') {
+      const ariaRole = typeof node.getAttribute === 'function' ? node.getAttribute('role') : null;
+      if (node.onclick || ariaRole === 'button' || ariaRole === 'option') {
         attrs.push(`[clickable]`);
       }
       // Note data attributes that hint at quiz content
-      for (const attr of node.attributes) {
-        if (attr.name.startsWith('data-') && attr.name.length < 30) {
-          attrs.push(`[${attr.name}=${attr.value.substring(0, 20)}]`);
+      if (node.attributes) {
+        for (const attr of node.attributes) {
+          if (attr && attr.name && attr.name.startsWith('data-') && attr.name.length < 30) {
+            attrs.push(`[${attr.name}=${String(attr.value || '').substring(0, 20)}]`);
+          }
         }
       }
       // Note if element has meaningful text content
@@ -95,12 +273,12 @@ const SchemaDetector = (() => {
         let cleanText = directText.substring(0, 40).replace(/["\n\r]/g, '');
         // Identify utility buttons visually so LLM ignores them as options
         const lowerText = cleanText.toLowerCase();
-        if (lowerText.includes('copy') || lowerText.includes('copier') || 
+        if (lowerText.includes('copy') || lowerText.includes('copier') ||
             lowerText.includes('next') || lowerText.includes('suivant') ||
             lowerText.includes('prev') || lowerText.includes('précédent') ||
             lowerText.includes('submit') || lowerText.includes('soumettre') ||
             lowerText.includes('report') || lowerText.includes('signaler')) {
-           attrs.push(`[utility-btn]`);
+          attrs.push(`[utility-btn]`);
         }
         attrs.push(`{text:"${cleanText}"}`);
       }
@@ -111,12 +289,13 @@ const SchemaDetector = (() => {
       nodeCount++;
 
       // Recurse into children
-      for (const child of node.children) {
+      const kids = node.children || [];
+      for (const child of kids) {
         walk(child, depth + 1);
       }
     }
 
-    walk(body, 0);
+    walk(skeletonRoot, 0);
 
     console.log(`🦴 DOM Skeleton: ${nodeCount} nœuds, ${lines.join('\n').length} caractères`);
     return lines.join('\n');
@@ -127,9 +306,11 @@ const SchemaDetector = (() => {
    */
   function getDirectTextContent(node) {
     let text = '';
-    for (const child of node.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        text += child.textContent;
+    const TEXT_NODE = typeof Node !== 'undefined' ? Node.TEXT_NODE : 3;
+    const children = node && node.childNodes ? node.childNodes : [];
+    for (const child of children) {
+      if (child && child.nodeType === TEXT_NODE) {
+        text += child.textContent || '';
       }
     }
     return text.trim();
@@ -654,6 +835,7 @@ RÈGLES CRITIQUES:
   // Public API
   return {
     buildDOMSkeleton,
+    findSkeletonRoot,
     discoverSchema,
     applySchema,
     validateSchema,
@@ -661,7 +843,10 @@ RÈGLES CRITIQUES:
   };
 })();
 
-// Export for content script usage
+// Export for content script & unit test usage
 if (typeof window !== 'undefined') {
   window.SchemaDetector = SchemaDetector;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = SchemaDetector;
 }

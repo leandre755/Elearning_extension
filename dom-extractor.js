@@ -9,15 +9,24 @@
   const SKIPPED_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'radio', 'checkbox', 'file', 'image', 'range', 'color', 'password']);
   const PLACEHOLDER_OPTION_RE = /^(--|s[eé]lect\b|choose\b|chois|pick\b|please\b|\.\.\.)/i;
   const BLANK_MARKER_RE = /(_{3,}|\[\s*\.{2,}\s*\])/;
+  const GENERIC_SECTION_LABEL_RE = /^(?:answers?|options?|choices?|select(?:\s+an?)?\s+(?:answer|option|choice)|choose(?:\s+an?)?\s+(?:answer|option)|your\s+answer|r[eé]ponses?|choix|s[eé]lectionnez\s+une\s+r[eé]ponse)\s*:?$/i;
+  const QUESTION_COUNTER_ONLY_RE = /^(?:question|q)\s*\d+\s*(?:of|sur|\/)\s*\d+\s*:?$/i;
+
+  function isGenericSectionLabel(text) {
+    const cleaned = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
+    if (!cleaned) return true;
+    return GENERIC_SECTION_LABEL_RE.test(cleaned) || QUESTION_COUNTER_ONLY_RE.test(cleaned);
+  }
 
   const QUIZ_SELECTORS = {
     quizContainer: [
       '.quiz', '.quiz-container', '.question-container',
       '[class*="quiz"]', '[class*="question"]', '[data-quiz]',
       '.assessment', '.test-container', 'form[class*="quiz"]',
-      '.quiz-form', '#quizForm'
+      '.quiz-form', '#quizForm', '#quizmain', '#quizcontainer', '#quizform'
     ],
     question: [
+      '#qtext', '.qtext',
       '.question', '.question-text', '.quiz-question',
       '[class*="question-title"]', '.q-text', 'legend',
       '.question-content', '[class*="questionText"]',
@@ -982,6 +991,7 @@
 
   function findQuestionTextElement(container) {
     const specificSelectors = [
+      '#qtext', '.qtext',
       '.question-text h3', '.question-text', 'legend',
       'h3', 'h4', '.q-text', '.question-content',
       '[class*="question-title"]', '[class*="questionText"]',
@@ -990,17 +1000,49 @@
     for (const sel of specificSelectors) {
       const matches = querySelectorAllDeep(sel, container);
       for (const found of matches) {
-        if (!hasNonStemAncestor(found, container)) return found;
+        if (hasNonStemAncestor(found, container)) continue;
+        const txt = extractTextDeep(found, { includeBlankMarkers: true });
+        if (txt && !isGenericSectionLabel(txt)) return found;
       }
     }
     // Fallback to <p> only if it is not inside an option/label/matching/dropzone container
     const paragraphs = querySelectorAllDeep('p', container);
     for (const p of paragraphs) {
-      if (!hasNonStemAncestor(p, container)) {
+      if (hasNonStemAncestor(p, container)) continue;
+      const txt = extractTextDeep(p, { includeBlankMarkers: true });
+      if (txt && !isGenericSectionLabel(txt)) {
         return p;
       }
     }
     return null;
+  }
+
+  function findPrecedingQuestionText(container, rootScope) {
+    if (!container || typeof container !== 'object') return '';
+    const headingTags = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P']);
+    let sib = container.previousElementSibling;
+    let steps = 0;
+    while (sib && steps < 3) {
+      if (sib === rootScope) break;
+      if (isNonStemElement(sib) || containerHasInteractiveControls(sib)) break;
+      const nested = findQuestionTextElement(sib);
+      if (nested) {
+        const nestedTxt = extractTextDeep(nested, { includeBlankMarkers: true });
+        if (nestedTxt && !isGenericSectionLabel(nestedTxt)) {
+          return nestedTxt;
+        }
+      }
+      const tag = typeof sib.tagName === 'string' ? sib.tagName.toUpperCase() : '';
+      if (headingTags.has(tag)) {
+        const directTxt = extractTextDeep(sib, { includeBlankMarkers: true, skipNode: isNonStemElement });
+        if (directTxt && !isGenericSectionLabel(directTxt)) {
+          return directTxt;
+        }
+      }
+      sib = sib.previousElementSibling;
+      steps++;
+    }
+    return '';
   }
 
   function collectTextInputs(container) {
@@ -1057,27 +1099,52 @@
    */
   async function extractQuestionFromContainer(container, index, opts = {}) {
     const rootScope = opts.rootScope || getDoc() || container;
-    const questionTextEl = opts.questionTextEl || findQuestionTextElement(container);
+    let questionTextEl = opts.questionTextEl || findQuestionTextElement(container);
 
     let extractedText = '';
+    let genericFallbackText = '';
     if (opts.promptOverride) {
       extractedText = cleanText(opts.promptOverride);
     } else if (questionTextEl) {
-      extractedText = extractTextDeep(questionTextEl, { includeBlankMarkers: true });
+      const cand = extractTextDeep(questionTextEl, { includeBlankMarkers: true });
+      if (cand && !isGenericSectionLabel(cand)) {
+        extractedText = cand;
+      } else {
+        if (cand) genericFallbackText = cand;
+        const altEl = findQuestionTextElement(container);
+        if (altEl) {
+          questionTextEl = altEl;
+          extractedText = extractTextDeep(altEl, { includeBlankMarkers: true });
+        }
+      }
     }
     if (!extractedText) {
-      extractedText = cleanText(
+      const ariaTxt = cleanText(
         safeAttr(container, 'aria-label') ||
         resolveAriaLabelledByText(container, container, rootScope) ||
         ''
       );
+      if (ariaTxt && !isGenericSectionLabel(ariaTxt)) {
+        extractedText = ariaTxt;
+      }
+    }
+    if (!extractedText) {
+      extractedText = findPrecedingQuestionText(container, rootScope);
     }
     if (!extractedText && opts.fallbackTextEl) {
       const fallbackOpts = { includeBlankMarkers: true };
       if (opts.fallbackTextEl === container) {
         fallbackOpts.skipNode = isNonStemElement;
       }
-      extractedText = extractTextDeep(opts.fallbackTextEl, fallbackOpts);
+      const fb = extractTextDeep(opts.fallbackTextEl, fallbackOpts);
+      if (fb && !isGenericSectionLabel(fb)) {
+        extractedText = fb;
+      } else if (fb && !genericFallbackText) {
+        genericFallbackText = fb;
+      }
+    }
+    if (!extractedText && genericFallbackText) {
+      extractedText = genericFallbackText;
     }
 
     const questionData = {
@@ -1454,6 +1521,9 @@
 
       for (let index = 0; index < questionElements.length; index++) {
         const el = questionElements[index];
+        if (hasNonStemAncestor(el, targetRoot)) continue;
+        const candidateTxt = extractTextDeep(el, { includeBlankMarkers: true });
+        if (!candidateTxt || isGenericSectionLabel(candidateTxt)) continue;
         const container = resolveGenericContainer(el, targetRoot);
         if (seenContainers.has(container)) continue;
         const q = await extractQuestionFromContainer(container, questions.length, {

@@ -563,6 +563,13 @@ async function testProvider(id, btn) {
   btn.disabled = true;
 
   const apiKeyInput = document.getElementById(`${id}ApiKey`);
+  if (!apiKeyInput) {
+    showStatus(`❌ Champ de clé introuvable pour ${id}`, 'error');
+    btn.style.borderColor = '#E85D75';
+    btn.textContent = originalText;
+    btn.disabled = false;
+    return;
+  }
   const apiKey = apiKeyInput.value.trim();
 
   if (!apiKey) {
@@ -573,8 +580,16 @@ async function testProvider(id, btn) {
   }
 
   try {
-    const providerKey = id.toLowerCase();
-    const provider = window.QuizProviders.PROVIDERS[providerKey];
+    const providerKey = String(id).toLowerCase();
+    const providersMap = window.QuizProviders && window.QuizProviders.PROVIDERS;
+    const provider = (providersMap && Object.prototype.hasOwnProperty.call(providersMap, providerKey))
+      ? providersMap[providerKey]
+      : null;
+    if (!provider) {
+      showStatus(`❌ Fournisseur inconnu ou non supporté: ${id}`, 'error');
+      btn.style.borderColor = '#E85D75';
+      return;
+    }
     const model = customModels[providerKey]?.text || provider.defaultTextModel;
 
     const response = await window.QuizProviders.callProvider(
