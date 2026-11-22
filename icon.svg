@@ -1,11 +1,14 @@
-<!-- icon.svg - Sauvegarde et convertis en 16x16, 48x48, 128x128 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#172A3A"/>
-      <stop offset="100%" style="stop-color:#4DA8DA"/>
+    <linearGradient id="safe-exm-n3" gradientUnits="userSpaceOnUse" x1="10" y1="10" x2="118" y2="118">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="55%" stop-color="#3B82F6" />
+      <stop offset="100%" stop-color="#2563EB" />
     </linearGradient>
   </defs>
-  <circle cx="64" cy="64" r="60" fill="url(#grad)"/>
-  <text x="64" y="80" font-size="50" text-anchor="middle" fill="white" font-family="Arial" font-weight="bold">Q</text>
+  <g fill="none" stroke="url(#safe-exm-n3)" stroke-width="18.58" stroke-linecap="round">
+    <path d="M 98.80 59.83 A 37.60 37.60 0 0 1 42.03 104.59" />
+    <path d="M 50.21 96.22 A 37.60 37.60 0 0 1 39.83 24.68" />
+    <path d="M 42.99 35.94 A 37.60 37.60 0 0 1 110.13 62.73" />
+  </g>
 </svg>
