@@ -1,18 +1,20 @@
-// content.js - Safe Exm Orchestrator & Parser (part of CRIT-01 and CRIT-03 refactoring)
-/* global ConfigCache, SchemaDetector, SchemaCache */
+// content.js - Safe Exm Orchestrator & Parser (CRIT-01, CRIT-03, F-AUTO-02, F-AUTO-03)
+/* global ConfigCache, SchemaDetector, SchemaCache, DOMExtractor, Number, Boolean, Array, RegExp */
 (async function () {
   'use strict';
 
+  const rootWin = typeof window !== 'undefined' ? window : globalThis;
+
   // Prevent multiple executions of the core script
-  if (window.__quizHelperLoaded) {
+  if (rootWin.__quizHelperLoaded) {
     return;
   }
-  window.__quizHelperLoaded = true;
+  rootWin.__quizHelperLoaded = true;
 
   // Initialize namespace
-  window.SafeExm = window.SafeExm || {};
+  rootWin.SafeExm = rootWin.SafeExm || {};
 
-  let isEnabled = false;
+  let isEnabled = true;
   let pendingTextAnswers = [];
 
   // Auto Mode Tracking
@@ -23,16 +25,44 @@
   let _autoModeObserver = null;
   let _autoModeDebounceTimer = null;
 
+  // F-AUTO-02 : Pre-Warm state (une seule fois par page)
+  let _preWarmTriggered = false;
+
+  // F-AUTO-03 : Auto-Submit pending timer state
+  let _pendingAutoSubmitTimer = null;
+  let _pendingAutoSubmitResolve = null;
+
+  // Tracking des questions déjà analysées pour le delta Auto Mode
+  const _analyzedQuestionTexts = new Set();
+  // Feedback tracking
+  let _feedbackSent = false;
+
+  const EXTRA_LOCAL_BEHAVIOR_KEYS = [
+    'domainPreset',
+    'customDomainRules',
+    'crossValidationEnabled',
+    'crossValidationThreshold',
+    'autoSubmitEnabled',
+    'autoSubmitMinConfidence',
+    'autoSubmitDelayMs',
+    'passiveNetworkIntercept'
+  ];
+
   // Initialisation de la configuration au chargement
   try {
-    if (!ConfigCache.isInitialized()) {
-      await ConfigCache.init();
-    }
-    isEnabled = ConfigCache.get('enabled') === true;
-    
-    // Auto Mode Bootstrapping
-    if (ConfigCache.get('autoMode') === true) {
-      setupAutoModeObserver();
+    if (typeof ConfigCache !== 'undefined' && ConfigCache) {
+      if (typeof ConfigCache.isInitialized === 'function' && !ConfigCache.isInitialized() && typeof ConfigCache.init === 'function') {
+        await ConfigCache.init();
+      }
+      const rawEnabled = typeof ConfigCache.get === 'function' ? ConfigCache.get('enabled') : undefined;
+      if (rawEnabled !== undefined) {
+        isEnabled = rawEnabled === true;
+      }
+
+      // Auto Mode Bootstrapping
+      if (typeof ConfigCache.get === 'function' && ConfigCache.get('autoMode') === true) {
+        setupAutoModeObserver();
+      }
     }
   } catch (e) {
     console.warn('⚠️ Erreur initialisation ConfigCache:', e.message);
@@ -44,15 +74,78 @@
   console.log('🚀 Safe Exm - Cœur d\'orchestration chargé avec succès !');
 
   // ──────────────────────────────────────────────
+  // SAFE SETTINGS SUMMARY (Forensic Fix: zero secret leak to console)
+  // ──────────────────────────────────────────────
+
+  /**
+   * Construit un résumé de configuration strictement dépourvu de clés API, tokens, secrets ou fichiers.
+   * @param {Object} rawSettings
+   * @returns {Object}
+   */
+  function buildSafeSettingsSummary(rawSettings) {
+    const s = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
+    const stealth = s.stealthLevel || s.discretionLevel || s.highlightDiscretion || 'furtif';
+    return {
+      enabled: Boolean(s.enabled ?? isEnabled),
+      autoMode: Boolean(s.autoMode),
+      selectedProvider: typeof s.selectedProvider === 'string' && s.selectedProvider ? s.selectedProvider : 'auto',
+      stealthLevel: typeof stealth === 'string' ? stealth : String(stealth),
+      domainPreset: typeof s.domainPreset === 'string' && s.domainPreset ? s.domainPreset : 'auto',
+      crossValidationEnabled: Boolean(s.crossValidationEnabled),
+      autoSubmitEnabled: Boolean(s.autoSubmitEnabled)
+    };
+  }
+
+  // ──────────────────────────────────────────────
+  // F-AUTO-02 : PRE-WARM PROVIDERS TRIGGER
+  // ──────────────────────────────────────────────
+
+  function isExtensionEnabled() {
+    if (isEnabled === false) return false;
+    try {
+      if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.get === 'function') {
+        if (!ConfigCache.isInitialized || ConfigCache.isInitialized()) {
+          const cached = ConfigCache.get('enabled');
+          if (cached === false) return false;
+          if (cached === true) return true;
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return Boolean(isEnabled);
+  }
+
+  function triggerPreWarmProviders(force = false) {
+    if (_preWarmTriggered && !force) {
+      return false;
+    }
+    if (!isExtensionEnabled()) {
+      return false;
+    }
+    if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+      return false;
+    }
+    _preWarmTriggered = true;
+    try {
+      chrome.runtime.sendMessage({ action: 'preWarmProviders' }, () => {
+        void chrome.runtime?.lastError;
+      });
+    } catch (e) { /* non-blocking */ }
+    return true;
+  }
+
+  function resetPreWarmState() {
+    _preWarmTriggered = false;
+  }
+
+  // ──────────────────────────────────────────────
   // AUTO MODE OBSERVER (SPA/Pagination detection)
   // ──────────────────────────────────────────────
-  // Tracking des questions déjà analysées pour le delta
-  let _analyzedQuestionTexts = new Set();
-  // Feedback tracking
-  let _feedbackSent = false;
 
   function setupAutoModeObserver() {
     if (_autoModeObserver) return;
+    if (typeof MutationObserver !== 'function' || typeof document === 'undefined' || !document || !document.body) {
+      return;
+    }
 
     _autoModeObserver = new MutationObserver(() => {
       triggerAutoAnalysis('DOM Mutation');
@@ -62,7 +155,7 @@
       childList: true,
       subtree: true
     });
-    
+
     console.log('🤖 Auto Mode: Observateur démarré.');
   }
 
@@ -78,25 +171,33 @@
     console.log('🤖 Auto Mode: Observateur arrêté.');
   }
 
-  // Listen to configuration change to toggle Auto Mode
-  ConfigCache.onChange((changes) => {
-    if (changes.autoMode) {
-      if (changes.autoMode.newValue === true) {
-        setupAutoModeObserver();
-      } else {
-        clearAutoModeObserver();
+  // Listen to configuration change to toggle Auto Mode & Panic abort
+  if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.onChange === 'function') {
+    ConfigCache.onChange((changes) => {
+      if (changes.autoMode) {
+        if (changes.autoMode.newValue === true) {
+          setupAutoModeObserver();
+        } else {
+          clearAutoModeObserver();
+        }
       }
-    }
-    if (changes.enabled) {
-      isEnabled = changes.enabled.newValue === true;
-      if (!isEnabled && window.SafeExm.HighlightManager) {
-        window.SafeExm.HighlightManager.clearAllHighlights();
+      if (changes.autoSubmitEnabled && changes.autoSubmitEnabled.newValue !== true) {
+        cancelPendingAutoSubmit();
       }
-    }
-  });
+      if (changes.enabled) {
+        isEnabled = changes.enabled.newValue === true;
+        if (!isEnabled) {
+          cancelPendingAutoSubmit();
+          if (rootWin.SafeExm.HighlightManager) {
+            rootWin.SafeExm.HighlightManager.clearAllHighlights();
+          }
+        }
+      }
+    });
+  }
 
   function triggerAutoAnalysis(reason) {
-    if (!isEnabled || _autoAnalysisRunning) return;
+    if (!isExtensionEnabled() || _autoAnalysisRunning) return;
 
     if (_autoModeDebounceTimer) {
       clearTimeout(_autoModeDebounceTimer);
@@ -105,11 +206,11 @@
     _autoModeDebounceTimer = setTimeout(async () => {
       try {
         if (!isQuizPage()) return;
-        
+
         // Pilier 5: Détection de feedback
         if (!_feedbackSent && detectAndSendFeedback()) {
           _feedbackSent = true;
-          return; // Si on est sur une page de feedback, on arrête l'analyse de quiz.
+          return;
         }
 
         const contentHash = (document.body?.textContent || '').substring(0, 500);
@@ -121,15 +222,15 @@
         console.log(`⚡ Auto Mode: Lancement de l'analyse (raison: ${reason})`);
         _autoAnalysisRunning = true;
 
-        const allSettings = ConfigCache.getAll();
-        await handleAnalyzeQuiz(allSettings, true, true); // forceFallback=true, isAuto=true
+        const allSettings = typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.getAll === 'function'
+          ? ConfigCache.getAll()
+          : {};
+        await handleAnalyzeQuiz(allSettings, true, true);
       } catch (e) {
-        // "Extension context invalidated" = l'extension a été rechargée,
-        // ce content script est orphelin et ne peut plus communiquer avec le SW.
-        // Arrêter proprement l'auto-mode plutôt que de spammer des erreurs.
         if (e.message && e.message.includes('Extension context invalidated')) {
           console.warn('🔄 Auto Mode: Extension rechargée. Rechargez la page pour continuer.');
           isEnabled = false;
+          cancelPendingAutoSubmit();
           clearAutoModeObserver();
           return;
         }
@@ -137,36 +238,40 @@
       } finally {
         _autoAnalysisRunning = false;
       }
-    }, 3000); // 3s debounce
+    }, 3000);
   }
 
   function detectAndSendFeedback() {
-    // Logique heuristique basique pour détecter une page de résultat
-    const bodyText = document.body.innerText.toLowerCase();
+    if (typeof document === 'undefined' || !document || !document.body) return false;
+    const bodyText = (document.body.innerText || document.body.textContent || '').toLowerCase();
     const hasScore = bodyText.includes('score') || bodyText.includes('résultat') || bodyText.includes('result');
-    const hasCorrection = bodyText.includes('correct answer') || bodyText.includes('bonne réponse') || document.querySelectorAll('.correct, .incorrect, [data-correct]').length > 0;
-    
+    const hasCorrection = bodyText.includes('correct answer') ||
+      bodyText.includes('bonne réponse') ||
+      (typeof document.querySelectorAll === 'function' && document.querySelectorAll('.correct, .incorrect, [data-correct]').length > 0);
+
     if (hasScore && hasCorrection) {
       console.log('🎓 Page de résultat détectée, extraction du feedback...');
       const feedbackData = [];
-      const questions = document.querySelectorAll('.question-block, .quiz-question, [class*="question"]'); 
+      const questions = typeof document.querySelectorAll === 'function'
+        ? document.querySelectorAll('.question-block, .quiz-question, [class*="question"]')
+        : [];
       questions.forEach(q => {
-        const text = q.innerText;
+        const text = q.innerText || q.textContent;
         if (text) {
           feedbackData.push({
             questionText: text.substring(0, 150),
-            agentAnswer: 'N/A', // Corrélation gérée côté UI
+            agentAnswer: 'N/A',
             correctAnswer: 'Voir le DOM',
             isCorrect: text.toLowerCase().includes('correct') && !text.toLowerCase().includes('incorrect')
           });
         }
       });
-      
-      if (feedbackData.length > 0) {
+
+      if (feedbackData.length > 0 && typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
         chrome.runtime.sendMessage({
           action: 'submitQuizFeedback',
           feedbackData,
-          config: ConfigCache.getAll()
+          config: typeof ConfigCache !== 'undefined' && ConfigCache ? ConfigCache.getAll() : {}
         });
         return true;
       }
@@ -179,20 +284,26 @@
   // ──────────────────────────────────────────────
 
   function setupMessageListener() {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      console.log('📨 Message reçu:', message);
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage || typeof chrome.runtime.onMessage.addListener !== 'function') {
+      return;
+    }
 
-      if (!window.SafeExm.HighlightManager) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      const safeAction = message && typeof message === 'object' ? message.action : 'unknown';
+      console.log('📨 Message reçu:', { action: safeAction });
+
+      if (!rootWin.SafeExm.HighlightManager) {
         console.warn('⚠️ HighlightManager non encore injecté/disponible.');
         sendResponse({ success: false, error: 'HighlightManager non disponible' });
         return;
       }
 
-      switch (message.action) {
+      switch (safeAction) {
         case 'toggleExtension':
-          isEnabled = message.enabled;
+          isEnabled = Boolean(message.enabled);
           if (!isEnabled) {
-            window.SafeExm.HighlightManager.clearAllHighlights();
+            cancelPendingAutoSubmit();
+            rootWin.SafeExm.HighlightManager.clearAllHighlights();
           }
           console.log('🔄 Extension:', isEnabled ? 'activée' : 'désactivée');
           sendResponse({ success: true });
@@ -209,10 +320,11 @@
               console.error('❌ Erreur analyse:', error);
               sendResponse({ success: false, error: error.message });
             });
-          return true; // Async response
+          return true;
 
         case 'clearHighlights':
-          window.SafeExm.HighlightManager.clearAllHighlights();
+          cancelPendingAutoSubmit();
+          rootWin.SafeExm.HighlightManager.clearAllHighlights();
           sendResponse({ success: true });
           break;
 
@@ -221,13 +333,13 @@
           handleDiscoverSchema()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
-          return true; // Async response
+          return true;
 
         case 'getSchemaStatus':
           handleGetSchemaStatus()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
-          return true; // Async response
+          return true;
 
         case 'pasteAnswer':
           handlePasteAnswer();
@@ -237,29 +349,540 @@
     });
   }
 
+  /**
+   * Détecte si la page courante contient un quiz (y compris dans un Shadow DOM via querySelectorDeep).
+   * Déclenche le pre-warm des providers (F-AUTO-02) une fois par page lorsque l'extension est activée.
+   */
   function isQuizPage() {
-    if (!window.SafeExm.DOMExtractor) return false;
-    const isQuizUrl = window.location.pathname.includes('quiz') ||
-      window.location.href.includes('quiz') ||
-      window.location.hostname.includes('quizgecko.com');
-    const hasQuizElements = document.querySelector(window.SafeExm.DOMExtractor.QUIZ_SELECTORS.quizContainer.join(','));
-    const hasInteractive = typeof SchemaDetector !== 'undefined' && SchemaDetector.hasInteractiveContent();
-    return isQuizUrl || hasQuizElements || hasInteractive;
+    const extractor = (rootWin.SafeExm && rootWin.SafeExm.DOMExtractor) ||
+      (typeof DOMExtractor !== 'undefined' ? DOMExtractor : null);
+    if (!extractor) return false;
+
+    const loc = (typeof window !== 'undefined' && window.location)
+      ? window.location
+      : { pathname: '', href: '', hostname: '' };
+    const isQuizUrl = (loc.pathname || '').includes('quiz') ||
+      (loc.href || '').includes('quiz') ||
+      (loc.hostname || '').includes('quizgecko.com');
+
+    const selectorsList = (extractor.QUIZ_SELECTORS && Array.isArray(extractor.QUIZ_SELECTORS.quizContainer))
+      ? extractor.QUIZ_SELECTORS.quizContainer
+      : ['.quiz', '.quiz-container', '.question-container'];
+    const selectorStr = selectorsList.join(',');
+
+    let quizContainerEl = null;
+    if (typeof DOMExtractor !== 'undefined' && DOMExtractor && typeof DOMExtractor.querySelectorDeep === 'function') {
+      quizContainerEl = DOMExtractor.querySelectorDeep(selectorStr, typeof document !== 'undefined' ? document : null);
+    } else if (typeof extractor.querySelectorDeep === 'function') {
+      quizContainerEl = extractor.querySelectorDeep(selectorStr, typeof document !== 'undefined' ? document : null);
+    } else if (typeof document !== 'undefined' && document && typeof document.querySelector === 'function') {
+      quizContainerEl = document.querySelector(selectorStr);
+    }
+
+    const hasQuizElements = Boolean(quizContainerEl);
+    const hasInteractive = typeof SchemaDetector !== 'undefined' &&
+      SchemaDetector &&
+      typeof SchemaDetector.hasInteractiveContent === 'function' &&
+      Boolean(SchemaDetector.hasInteractiveContent());
+
+    const detected = Boolean(isQuizUrl || hasQuizElements || hasInteractive);
+    if (detected && isExtensionEnabled()) {
+      triggerPreWarmProviders();
+    }
+    return detected;
+  }
+
+  // ──────────────────────────────────────────────
+  // AUTO MODE DELTA FILTER & RE-INDEXING
+  // ──────────────────────────────────────────────
+
+  /**
+   * Filtre les questions non encore analysées en mode Auto et ré-indexe 1..N
+   * pour aligner q.index (1-based) avec ans.questionIndex (0-based).
+   * @param {Array<Object>} questions
+   * @param {Set<string>} [analyzedSet]
+   * @returns {Array<Object>}
+   */
+  function filterAndReindexDeltaQuestions(questions, analyzedSet = _analyzedQuestionTexts) {
+    if (!Array.isArray(questions)) return [];
+    const targetSet = analyzedSet instanceof Set ? analyzedSet : _analyzedQuestionTexts;
+    const newQuestions = questions.filter((q) => {
+      if (!q || typeof q.text !== 'string') return false;
+      return !targetSet.has(q.text.trim());
+    });
+    newQuestions.forEach((q, idx) => {
+      q.index = idx + 1;
+    });
+    return newQuestions;
+  }
+
+  // ──────────────────────────────────────────────
+  // F-AUTO-03 : OPT-IN AUTO-SUBMIT INTELLIGENCE
+  // ──────────────────────────────────────────────
+
+  function computeAutoSubmitDelay(baseDelayMs) {
+    const baseDelay = Math.max(300, Number(baseDelayMs) || 1500);
+    const jitter = Math.floor((Math.random() * 0.4 - 0.2) * baseDelay);
+    return Math.max(200, baseDelay + jitter);
+  }
+
+  function cancelPendingAutoSubmit() {
+    let wasCancelled = false;
+    if (_pendingAutoSubmitTimer !== null) {
+      clearTimeout(_pendingAutoSubmitTimer);
+      _pendingAutoSubmitTimer = null;
+      wasCancelled = true;
+    }
+    if (typeof _pendingAutoSubmitResolve === 'function') {
+      const resolve = _pendingAutoSubmitResolve;
+      _pendingAutoSubmitResolve = null;
+      resolve({ scheduled: true, executed: false, aborted: true });
+      wasCancelled = true;
+    }
+    if (wasCancelled) {
+      console.log('🛑 Auto-Submit: Soumission programmée annulée (Panic / Désactivation).');
+    }
+    return wasCancelled;
+  }
+
+  function canAutoSubmitBatch(questions, answers, settings) {
+    if (!settings || typeof settings !== 'object' || settings.autoSubmitEnabled !== true) {
+      return { allowed: false, reason: 'disabled' };
+    }
+    if (settings.enabled === false || !isExtensionEnabled()) {
+      return { allowed: false, reason: 'extension_disabled' };
+    }
+    if (!Array.isArray(questions) || questions.length === 0 || !Array.isArray(answers) || answers.length === 0) {
+      console.log('🛡️ Auto-Submit ignoré : aucune question ou réponse disponible.');
+      return { allowed: false, reason: 'empty_batch' };
+    }
+    if (answers.length < questions.length) {
+      console.log(`🛡️ Auto-Submit ignoré : réponses incomplètes (${answers.length}/${questions.length}).`);
+      return { allowed: false, reason: 'incomplete_answers' };
+    }
+
+    const minConfidence = Number(settings.autoSubmitMinConfidence) || 85;
+    const answersByIndex = new Map();
+    answers.forEach((ans, idx) => {
+      if (ans && typeof ans === 'object') {
+        const qIdx = typeof ans.questionIndex === 'number' ? ans.questionIndex : idx;
+        answersByIndex.set(qIdx, ans);
+      }
+    });
+
+    for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+      const ans = answersByIndex.get(qIdx) || answers[qIdx];
+      if (!ans || typeof ans !== 'object') {
+        console.log(`🛡️ Auto-Submit ignoré : réponse manquante pour Q${qIdx + 1}.`);
+        return { allowed: false, reason: 'missing_answer', questionIndex: qIdx };
+      }
+      const confidence = (typeof ans.confidence === 'number' && Number.isFinite(ans.confidence))
+        ? ans.confidence
+        : 0;
+      if (confidence < minConfidence) {
+        console.log(`🛡️ Auto-Submit ignoré : confiance insuffisante sur Q${qIdx + 1} (${confidence}% < ${minConfidence}%).`);
+        return {
+          allowed: false,
+          reason: 'low_confidence',
+          questionIndex: qIdx,
+          confidence,
+          minConfidence
+        };
+      }
+    }
+
+    return { allowed: true, minConfidence };
+  }
+
+  function dispatchInputEvents(el) {
+    if (!el || typeof el.dispatchEvent !== 'function') return;
+    try {
+      if (typeof Event === 'function') {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        el.dispatchEvent({ type: 'input', bubbles: true });
+        el.dispatchEvent({ type: 'change', bubbles: true });
+      }
+    } catch (e) { /* ignore mock event errors */ }
+  }
+
+  function fillQuestionAnswer(question, answer) {
+    if (!question || typeof question !== 'object' || !answer || typeof answer !== 'object') {
+      return false;
+    }
+
+    const qType = question.questionType || question.type || 'unknown';
+    const optionIndices = Array.isArray(answer.optionIndices) ? answer.optionIndices : [];
+    const textAnswer = answer.textAnswer !== undefined && answer.textAnswer !== null
+      ? String(answer.textAnswer)
+      : (typeof answer.raw === 'string' ? answer.raw : '');
+
+    if (qType === 'radio' || qType === 'single_choice') {
+      const targetIdx = optionIndices.length > 0 ? optionIndices[0] : -1;
+      const options = Array.isArray(question.options) ? question.options : [];
+      const chosen = options[targetIdx];
+      if (!chosen) return false;
+      const el = chosen.element || chosen.labelElement;
+      if (!el) return false;
+
+      options.forEach((opt, idx) => {
+        if (opt && opt.element && idx !== targetIdx) {
+          opt.element.checked = false;
+        }
+      });
+      el.checked = true;
+      chosen.checked = true;
+      if (typeof el.setAttribute === 'function' && typeof el.getAttribute === 'function' && el.getAttribute('role') === 'radio') {
+        el.setAttribute('aria-checked', 'true');
+      }
+      if (typeof el.click === 'function') {
+        el.click();
+      } else if (chosen.labelElement && typeof chosen.labelElement.click === 'function') {
+        chosen.labelElement.click();
+      }
+      dispatchInputEvents(el);
+      return true;
+    }
+
+    if (qType === 'checkbox' || qType === 'multi_choice') {
+      const options = Array.isArray(question.options) ? question.options : [];
+      if (optionIndices.length === 0) return false;
+      const selectedSet = new Set(optionIndices);
+      let filled = false;
+
+      options.forEach((opt, idx) => {
+        if (!opt || !opt.element) return;
+        const shouldCheck = selectedSet.has(idx);
+        if (shouldCheck) {
+          const wasChecked = Boolean(opt.element.checked);
+          opt.element.checked = true;
+          opt.checked = true;
+          if (typeof opt.element.setAttribute === 'function' && typeof opt.element.getAttribute === 'function' && opt.element.getAttribute('role') === 'checkbox') {
+            opt.element.setAttribute('aria-checked', 'true');
+          }
+          if (!wasChecked && typeof opt.element.click === 'function') {
+            opt.element.click();
+            opt.element.checked = true;
+          }
+          dispatchInputEvents(opt.element);
+          filled = true;
+        }
+      });
+      return filled;
+    }
+
+    if (qType === 'select_matching' || qType === 'select' || (Array.isArray(question.selects) && question.selects.length > 0)) {
+      const selects = Array.isArray(question.selects) && question.selects.length > 0
+        ? question.selects
+        : (question.inputElement ? [{ element: question.inputElement, options: question.options || [] }] : []);
+      if (selects.length === 0) return false;
+
+      const textParts = textAnswer ? textAnswer.split(/\s*[|;\n,]\s*/).filter(Boolean) : [];
+      let filled = false;
+
+      selects.forEach((selEntry, sIdx) => {
+        const selectEl = selEntry && (selEntry.element || selEntry.selectElement);
+        if (!selectEl) return;
+        const opts = Array.isArray(selEntry.options) ? selEntry.options : [];
+        let chosenOpt = null;
+
+        if (selects.length === 1 && optionIndices.length > 0 && opts[optionIndices[0]]) {
+          chosenOpt = opts[optionIndices[0]];
+        } else if (optionIndices[sIdx] !== undefined && opts[optionIndices[sIdx]]) {
+          chosenOpt = opts[optionIndices[sIdx]];
+        } else {
+          const targetText = (textParts[sIdx] || textParts[0] || textAnswer || '').trim().toLowerCase();
+          if (targetText) {
+            chosenOpt = opts.find(o => o && (
+              String(o.value || '').trim().toLowerCase() === targetText ||
+              String(o.text || '').trim().toLowerCase() === targetText ||
+              String(o.text || '').trim().toLowerCase().includes(targetText)
+            ));
+            if (!chosenOpt) {
+              selectEl.value = textParts[sIdx] || textParts[0] || textAnswer;
+              dispatchInputEvents(selectEl);
+              filled = true;
+              return;
+            }
+          }
+        }
+
+        if (chosenOpt) {
+          opts.forEach(o => {
+            if (o && o.element) o.element.selected = false;
+          });
+          if (chosenOpt.element) {
+            chosenOpt.element.selected = true;
+          }
+          chosenOpt.selected = true;
+          selectEl.value = chosenOpt.value !== undefined ? chosenOpt.value : chosenOpt.text;
+          dispatchInputEvents(selectEl);
+          filled = true;
+        }
+      });
+
+      return filled;
+    }
+
+    if (qType === 'fill_blank' || qType === 'text' || question.inputElement || (Array.isArray(question.blanks) && question.blanks.length > 0)) {
+      const blanks = Array.isArray(question.blanks) && question.blanks.length > 0
+        ? question.blanks.map(b => b && b.element).filter(Boolean)
+        : (Array.isArray(question.inputElements) && question.inputElements.length > 0
+          ? question.inputElements
+          : (question.inputElement ? [question.inputElement] : []));
+
+      if (blanks.length === 0 || !textAnswer) return false;
+
+      const parts = blanks.length > 1 && /[|;,]/.test(textAnswer)
+        ? textAnswer.split(/\s*[|;,]\s*/)
+        : [textAnswer];
+
+      blanks.forEach((inputEl, idx) => {
+        const val = parts[idx] !== undefined ? parts[idx] : (parts[0] || textAnswer);
+        if (inputEl.isContentEditable) {
+          inputEl.textContent = val;
+          inputEl.innerText = val;
+        } else {
+          inputEl.value = val;
+        }
+        dispatchInputEvents(inputEl);
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  const SUBMIT_POSITIVE_RE = /^(submit|valider|envoyer|check|v[eé]rifier|finish|terminer|soumettre|confirmer)\b/i;
+  const SUBMIT_DESTRUCTIVE_RE = /\b(cancel|annuler|reset|r[eé]initialiser|delete|supprimer|remove|logout|d[eé]connexion|sign\s*out|back|retour|pr[eé]c[eé]dent|exit|quitter|abort|clear|effacer)\b/i;
+
+  function isSafeSubmitControl(el) {
+    if (!el || typeof el !== 'object') return false;
+    if (el.disabled === true) return false;
+    const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : '';
+    if (tag === 'A' && (el.href || (typeof el.getAttribute === 'function' && el.getAttribute('href')))) {
+      return false;
+    }
+
+    const typeAttr = (typeof el.getAttribute === 'function' ? el.getAttribute('type') : null) || el.type || '';
+    const lowerType = String(typeAttr).toLowerCase();
+    if (lowerType === 'reset') return false;
+
+    const label = [
+      el.textContent || '',
+      el.innerText || '',
+      el.value || '',
+      (typeof el.getAttribute === 'function' && el.getAttribute('aria-label')) || el.ariaLabel || '',
+      el.title || '',
+      el.name || '',
+      el.id || ''
+    ].join(' ').replace(/\s+/g, ' ').trim();
+
+    if (SUBMIT_DESTRUCTIVE_RE.test(label)) {
+      return false;
+    }
+
+    if ((tag === 'BUTTON' || tag === 'INPUT') && lowerType === 'submit') {
+      return true;
+    }
+
+    const primaryLabel = (
+      (el.textContent || el.innerText || el.value || (typeof el.getAttribute === 'function' && el.getAttribute('aria-label')) || '')
+    ).replace(/\s+/g, ' ').trim();
+
+    return SUBMIT_POSITIVE_RE.test(primaryLabel);
+  }
+
+  function findQuizSubmitButton(root = null, questions = []) {
+    const extractor = (rootWin.SafeExm && rootWin.SafeExm.DOMExtractor) ||
+      (typeof DOMExtractor !== 'undefined' ? DOMExtractor : null);
+
+    const searchScopes = [];
+    if (root) searchScopes.push(root);
+    if (Array.isArray(questions)) {
+      for (const q of questions) {
+        if (q && q.element) {
+          if (typeof q.element.closest === 'function') {
+            try {
+              const formOrContainer = q.element.closest('form, .quiz, .quiz-container, .assessment, .test-container');
+              if (formOrContainer && !searchScopes.includes(formOrContainer)) {
+                searchScopes.push(formOrContainer);
+              }
+            } catch (e) { /* ignore */ }
+          }
+          if (q.element.parentElement && !searchScopes.includes(q.element.parentElement)) {
+            searchScopes.push(q.element.parentElement);
+          }
+        }
+      }
+    }
+    if (typeof document !== 'undefined' && document && !searchScopes.includes(document)) {
+      searchScopes.push(document);
+    }
+
+    const candidateSelector = 'button[type="submit"], input[type="submit"], button, [role="button"]';
+
+    for (const scope of searchScopes) {
+      if (!scope) continue;
+      let candidates = [];
+      if (extractor && typeof extractor.querySelectorAllDeep === 'function') {
+        candidates = extractor.querySelectorAllDeep(candidateSelector, scope);
+      } else if (typeof scope.querySelectorAll === 'function') {
+        candidates = Array.from(scope.querySelectorAll(candidateSelector));
+      }
+
+      for (const candidate of candidates) {
+        if (extractor && typeof extractor.isElementVisible === 'function' && !extractor.isElementVisible(candidate)) {
+          continue;
+        }
+        if (isSafeSubmitControl(candidate)) {
+          return candidate;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function executeAutoSubmit(questions, answers, root = null) {
+    const answersByIndex = new Map();
+    if (Array.isArray(answers)) {
+      answers.forEach((ans, idx) => {
+        if (ans && typeof ans === 'object') {
+          const qIdx = typeof ans.questionIndex === 'number' ? ans.questionIndex : idx;
+          answersByIndex.set(qIdx, ans);
+        }
+      });
+    }
+
+    let filledCount = 0;
+    if (Array.isArray(questions)) {
+      questions.forEach((q, qIdx) => {
+        const ans = answersByIndex.get(qIdx) || (Array.isArray(answers) ? answers[qIdx] : null);
+        if (q && ans && fillQuestionAnswer(q, ans)) {
+          filledCount++;
+        }
+      });
+    }
+
+    const submitBtn = findQuizSubmitButton(root, questions);
+    let submitted = false;
+    if (submitBtn && typeof submitBtn.click === 'function') {
+      submitBtn.click();
+      submitted = true;
+      console.log(`✅ Auto-Submit exécuté : ${filledCount} question(s) remplie(s), bouton soumis.`);
+    } else {
+      console.log(`ℹ️ Auto-Submit : ${filledCount} question(s) remplie(s), aucun bouton de soumission trouvé.`);
+    }
+
+    return {
+      filledCount,
+      submitted,
+      submitButton: submitBtn
+    };
+  }
+
+  function scheduleAutoSubmit(questions, answers, settings, root = null) {
+    cancelPendingAutoSubmit();
+
+    const check = canAutoSubmitBatch(questions, answers, settings);
+    if (!check.allowed) {
+      return {
+        scheduled: false,
+        reason: check.reason,
+        questionIndex: check.questionIndex,
+        confidence: check.confidence,
+        minConfidence: check.minConfidence,
+        promise: Promise.resolve({ scheduled: false, executed: false, reason: check.reason })
+      };
+    }
+
+    const delayMs = computeAutoSubmitDelay(settings.autoSubmitDelayMs);
+    console.log(`⏱️ Auto-Submit programmé dans ${delayMs}ms (seuil=${check.minConfidence}%)...`);
+
+    const promise = new Promise((resolve) => {
+      _pendingAutoSubmitResolve = resolve;
+      _pendingAutoSubmitTimer = setTimeout(() => {
+        _pendingAutoSubmitTimer = null;
+        const finish = _pendingAutoSubmitResolve;
+        _pendingAutoSubmitResolve = null;
+
+        if (!isExtensionEnabled()) {
+          if (finish) finish({ scheduled: true, executed: false, aborted: true });
+          return;
+        }
+
+        const result = executeAutoSubmit(questions, answers, root);
+        if (finish) {
+          finish({
+            scheduled: true,
+            executed: true,
+            aborted: false,
+            delayMs,
+            ...result
+          });
+        }
+      }, delayMs);
+    });
+
+    return {
+      scheduled: true,
+      delayMs,
+      timerId: _pendingAutoSubmitTimer,
+      promise
+    };
   }
 
   // ──────────────────────────────────────────────
   // QUIZ ANALYSIS — Délégation au Background Agent (F-INT-01)
   // ──────────────────────────────────────────────
 
+  async function loadEffectiveSettings(inputSettings) {
+    let syncConfig = {};
+    try {
+      if (typeof ConfigCache !== 'undefined' && ConfigCache) {
+        if (typeof ConfigCache.isInitialized === 'function' && !ConfigCache.isInitialized() && typeof ConfigCache.init === 'function') {
+          await ConfigCache.init();
+        }
+        if (typeof ConfigCache.getAll === 'function') {
+          syncConfig = ConfigCache.getAll() || {};
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    let localExtra = {};
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === 'function') {
+        const res = await Promise.resolve(chrome.storage.local.get(EXTRA_LOCAL_BEHAVIOR_KEYS));
+        if (res && typeof res === 'object') {
+          localExtra = res;
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    const effective = {
+      ...localExtra,
+      ...syncConfig,
+      ...(inputSettings && typeof inputSettings === 'object' ? inputSettings : {})
+    };
+    return { syncConfig: { ...localExtra, ...syncConfig }, effective };
+  }
+
   async function handleAnalyzeQuiz(settings, forceFallback = false, isAuto = false) {
     if (!settings || typeof settings !== 'object') {
       throw new Error('Argument settings invalide dans handleAnalyzeQuiz.');
     }
 
-    console.log('⚙️ Settings:', settings, 'Force Fallback:', forceFallback);
-    chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse et extraction du quiz...', percent: 10 }).catch(() => {});
+    const { syncConfig, effective: effectiveSettings } = await loadEffectiveSettings(settings);
+    const safeSummary = buildSafeSettingsSummary(effectiveSettings);
+    console.log('⚙️ Settings:', safeSummary, 'Force Fallback:', Boolean(forceFallback));
 
-    if (!window.SafeExm.DOMExtractor || !window.SafeExm.HighlightManager) {
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse et extraction du quiz...', percent: 10 })).catch(() => {});
+    }
+
+    if (!rootWin.SafeExm.DOMExtractor || !rootWin.SafeExm.HighlightManager) {
       throw new Error('Les modules SafeExm ne sont pas tous disponibles.');
     }
 
@@ -270,50 +893,47 @@
 
     while (attempts < MAX_ATTEMPTS) {
       attempts++;
-      quizData = await window.SafeExm.DOMExtractor.extractQuizData();
-      console.log(`📝 [Essai ${attempts}] Données quiz extraites:`, quizData);
+      quizData = await rootWin.SafeExm.DOMExtractor.extractQuizData();
+      console.log(`📝 [Essai ${attempts}] Questions extraites: ${quizData && Array.isArray(quizData.questions) ? quizData.questions.length : 0}`);
 
-      if (quizData.questions.length > 0) {
+      if (quizData && Array.isArray(quizData.questions) && quizData.questions.length > 0) {
         break;
       }
 
       console.log('ℹ️ Aucune question trouvée. Tentative de découverte automatique du schéma...');
-      chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Découverte automatique de la structure...', percent: 12 }).catch(() => {});
-      if (forceFallback || (typeof SchemaDetector !== 'undefined' && SchemaDetector.hasInteractiveContent())) {
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Découverte automatique de la structure...', percent: 12 })).catch(() => {});
+      }
+      if (forceFallback || (typeof SchemaDetector !== 'undefined' && SchemaDetector && SchemaDetector.hasInteractiveContent())) {
         try {
           const newSchema = await SchemaDetector.discoverSchema(true);
           if (newSchema) {
-            if (typeof SchemaCache !== 'undefined') {
-              await SchemaCache.saveSchema(window.location.hostname, newSchema);
+            if (typeof SchemaCache !== 'undefined' && SchemaCache) {
+              const hostname = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
+              await SchemaCache.saveSchema(hostname, newSchema);
             }
             console.log('🔄 Schéma découvert ! La boucle va relancer l\'extraction...');
             continue;
           }
-        } catch(e) {
+        } catch (e) {
           console.error('❌ Échec de la découverte automatique du schéma:', e);
         }
       }
       break;
     }
 
-    if (quizData && quizData.questions.length > 0 && isAuto) {
-      const newQuestions = quizData.questions.filter(q => !_analyzedQuestionTexts.has(q.text.trim()));
+    if (quizData && Array.isArray(quizData.questions) && quizData.questions.length > 0 && isAuto) {
+      const newQuestions = filterAndReindexDeltaQuestions(quizData.questions, _analyzedQuestionTexts);
       if (newQuestions.length === 0) {
-        console.log("⚡ Auto Mode: Aucune nouvelle question à analyser (Delta vide).");
+        console.log('⚡ Auto Mode: Aucune nouvelle question à analyser (Delta vide).');
         return { success: true, data: { questionsFound: 0 } };
       }
       quizData.questions = newQuestions;
     }
 
-    if (!quizData || quizData.questions.length === 0) {
+    if (!quizData || !Array.isArray(quizData.questions) || quizData.questions.length === 0) {
       return { success: false, error: 'Aucune question trouvée sur cette page, même après analyse approfondie.' };
     }
-
-    // ─── Charger la configuration pour la transmettre à l'agent ───
-    if (!ConfigCache.isInitialized()) {
-      await ConfigCache.init();
-    }
-    const syncConfig = ConfigCache.getAll();
 
     // Extraire les clés API du config mergé (ConfigCache fusionne sync + local)
     const apiKeys = {
@@ -333,20 +953,25 @@
           syncConfig,
           apiKeys,
           settings: {
-            selectedProvider: settings.selectedProvider || null,
-            thinkingMode: settings.thinkingMode || false,
-            thinkingDepth: settings.thinkingDepth || 10000,
-            forceFallback: forceFallback
+            selectedProvider: effectiveSettings.selectedProvider || null,
+            thinkingMode: effectiveSettings.thinkingMode || false,
+            thinkingDepth: effectiveSettings.thinkingDepth || 10000,
+            forceFallback: forceFallback,
+            domainPreset: effectiveSettings.domainPreset || 'auto',
+            customDomainRules: effectiveSettings.customDomainRules || '',
+            crossValidationEnabled: Boolean(effectiveSettings.crossValidationEnabled),
+            crossValidationThreshold: Number(effectiveSettings.crossValidationThreshold) || 70
           }
         },
-        tabId: null // Le tabId sera résolu côté SW si nécessaire
+        tabId: null
       };
 
       console.log(`🤖 Délégation au BackgroundAgent: ${quizData.questions.length} questions`);
-      chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Agent de résolution activé...', percent: 15 }).catch(() => {});
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Agent de résolution activé...', percent: 15 })).catch(() => {});
+      }
 
       // ─── Appel asynchrone au Background Agent via port persistant ───
-      // Un port persistant empêche Chrome de tuer le Service Worker pendant l'opération.
       const agentResult = await new Promise((resolve, reject) => {
         const port = chrome.runtime.connect({ name: 'solveQuiz' });
         let resolved = false;
@@ -372,7 +997,6 @@
 
       if (!agentResult.success) {
         console.error('❌ BackgroundAgent a échoué:', agentResult.error);
-        // Afficher le journal pour le debug
         if (agentResult.journal && agentResult.journal.length > 0) {
           console.group('📋 Journal de l\'agent:');
           for (const entry of agentResult.journal) {
@@ -388,14 +1012,20 @@
       const meta = agentResult.metadata || {};
 
       console.log(`🔗 Agent terminé: ${meta.answersFound}/${meta.questionsTotal} réponses, provider=${meta.provider}, durée=${meta.totalDurationMs}ms`);
-      chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Application du surlignage...', percent: 90 }).catch(() => {});
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Application du surlignage...', percent: 90 })).catch(() => {});
+      }
 
       // Call HighlightManager API
-      window.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers);
+      await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
+        stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion
+      });
 
       // Stocker les questions analysées pour le mode Auto (Delta)
       for (const q of quizData.questions) {
-        _analyzedQuestionTexts.add(q.text.trim());
+        if (q && typeof q.text === 'string') {
+          _analyzedQuestionTexts.add(q.text.trim());
+        }
       }
 
       // Stocker les réponses texte pour le menu contextuel
@@ -413,20 +1043,26 @@
       }
       console.log(`📋 ${pendingTextAnswers.length} réponse(s) texte en attente pour le collage via menu contextuel.`);
 
-      chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse terminée avec succès !', percent: 100 }).catch(() => {});
+      // F-AUTO-03 : Opt-In Auto-Submit Intelligence
+      const autoSubmitSchedule = scheduleAutoSubmit(quizData.questions, allParsedAnswers, effectiveSettings);
+
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse terminée avec succès !', percent: 100 })).catch(() => {});
+      }
 
       return {
         success: true,
         data: {
-          questionsFound: meta.questionsTotal,
-          answersHighlighted: meta.answersFound,
+          questionsFound: meta.questionsTotal ?? quizData.questions.length,
+          answersHighlighted: meta.answersFound ?? allParsedAnswers.length,
           provider: meta.provider,
           model: meta.model,
           imagesCount: quizData.totalImages,
           chunksProcessed: meta.chunksProcessed,
           searchQueriesRun: meta.searchQueriesRun,
           retriesUsed: meta.retriesUsed,
-          totalDurationMs: meta.totalDurationMs
+          totalDurationMs: meta.totalDurationMs,
+          autoSubmitScheduled: autoSubmitSchedule.scheduled
         }
       };
     } catch (error) {
@@ -434,9 +1070,6 @@
       return { success: false, error: error.message };
     }
   }
-
-
-
 
   // ──────────────────────────────────────────────
   // SCHEMA DISCOVERY HANDLERS
@@ -451,7 +1084,7 @@
       return { success: false, error: 'Impossible de générer un schéma valide pour ce domaine.' };
     }
 
-    const hostname = window.location.hostname;
+    const hostname = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
     if (typeof SchemaCache !== 'undefined') {
       await SchemaCache.saveSchema(hostname, schema);
     }
@@ -459,7 +1092,7 @@
   }
 
   async function handleGetSchemaStatus() {
-    const hostname = window.location.hostname;
+    const hostname = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
     let cached = null;
     if (typeof SchemaCache !== 'undefined') {
       cached = await SchemaCache.getCachedSchema(hostname);
@@ -473,25 +1106,47 @@
 
   function handlePasteAnswer() {
     if (pendingTextAnswers.length === 0) return;
-    
+
     console.log('📋 Injection du texte de réponse par clic droit / raccourci...');
     pendingTextAnswers.forEach(item => {
-      const activeEl = item.element || document.activeElement;
+      const activeEl = item.element || (typeof document !== 'undefined' && document ? document.activeElement : null);
       if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
         if (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') {
           activeEl.value = item.answer;
         } else {
           activeEl.innerText = item.answer;
         }
-        activeEl.dispatchEvent(new Event('input', { bubbles: true }));
-        activeEl.dispatchEvent(new Event('change', { bubbles: true }));
+        dispatchInputEvents(activeEl);
       }
     });
   }
 
   // Export Content API
-  window.SafeExm.Content = {
+  const ContentAPI = {
     handleAnalyzeQuiz,
-    isQuizPage
+    isQuizPage,
+    buildSafeSettingsSummary,
+    filterAndReindexDeltaQuestions,
+    triggerPreWarmProviders,
+    resetPreWarmState,
+    scheduleAutoSubmit,
+    cancelPendingAutoSubmit,
+    executeAutoSubmit,
+    canAutoSubmitBatch,
+    computeAutoSubmitDelay,
+    findQuizSubmitButton,
+    fillQuestionAnswer,
+    getAnalyzedQuestionTexts: () => _analyzedQuestionTexts,
+    clearAnalyzedQuestionTexts: () => _analyzedQuestionTexts.clear(),
+    setEnabled: (val) => {
+      isEnabled = Boolean(val);
+      if (!isEnabled) cancelPendingAutoSubmit();
+    },
+    getEnabled: () => isExtensionEnabled()
   };
+
+  rootWin.SafeExm.Content = ContentAPI;
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ContentAPI;
+  }
 })();

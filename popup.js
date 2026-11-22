@@ -1,3 +1,6 @@
+// popup.js — Safe Exm Popup Controller & Provider Performance Analytics (F-ANA-03)
+/* global Number, Boolean, Array */
+
 let state = {
   enabled: false,
   captureImages: true,
@@ -8,34 +11,60 @@ let state = {
 
 // Éléments DOM
 const elements = {
-  extensionToggle: document.getElementById('extensionToggle'),
-  autoModeToggle: document.getElementById('autoModeToggle'),
-  connectionStatus: document.getElementById('connectionStatus'),
-  statusDot: document.getElementById('statusDot'),
-  analyzeBtn: document.getElementById('analyzeBtn'),
-  clearBtn: document.getElementById('clearBtn'),
-  schemaStatus: document.getElementById('schemaStatus'),
-  schemaIcon: document.getElementById('schemaIcon'),
-  schemaText: document.getElementById('schemaText'),
-  schemaRediscoverBtn: document.getElementById('schemaRediscoverBtn'),
-  
+  extensionToggle: typeof document !== 'undefined' ? document.getElementById('extensionToggle') : null,
+  autoModeToggle: typeof document !== 'undefined' ? document.getElementById('autoModeToggle') : null,
+  connectionStatus: typeof document !== 'undefined' ? document.getElementById('connectionStatus') : null,
+  statusDot: typeof document !== 'undefined' ? document.getElementById('statusDot') : null,
+  analyzeBtn: typeof document !== 'undefined' ? document.getElementById('analyzeBtn') : null,
+  clearBtn: typeof document !== 'undefined' ? document.getElementById('clearBtn') : null,
+  schemaStatus: typeof document !== 'undefined' ? document.getElementById('schemaStatus') : null,
+  schemaIcon: typeof document !== 'undefined' ? document.getElementById('schemaIcon') : null,
+  schemaText: typeof document !== 'undefined' ? document.getElementById('schemaText') : null,
+  schemaRediscoverBtn: typeof document !== 'undefined' ? document.getElementById('schemaRediscoverBtn') : null,
+
   // Elements de progression
-  progressSection: document.getElementById('progressSection'),
-  progressBarFill: document.getElementById('progressBarFill'),
-  progressText: document.getElementById('progressText'),
-  progressPercentage: document.getElementById('progressPercentage')
+  progressSection: typeof document !== 'undefined' ? document.getElementById('progressSection') : null,
+  progressBarFill: typeof document !== 'undefined' ? document.getElementById('progressBarFill') : null,
+  progressText: typeof document !== 'undefined' ? document.getElementById('progressText') : null,
+  progressPercentage: typeof document !== 'undefined' ? document.getElementById('progressPercentage') : null,
+
+  // Elements Analytics (F-ANA-03)
+  providerStatsSection: typeof document !== 'undefined' ? document.getElementById('providerStatsSection') : null,
+  providerStatsList: typeof document !== 'undefined' ? document.getElementById('providerStatsList') : null,
+  providerStatsEmpty: typeof document !== 'undefined' ? document.getElementById('providerStatsEmpty') : null,
+  resetStatsBtn: typeof document !== 'undefined' ? document.getElementById('resetStatsBtn') : null
 };
 
-// Initialisation
-document.addEventListener('DOMContentLoaded', async () => {
-  await loadSettings();
-  setupEventListeners();
-  checkApiConnection();
-  checkSchemaStatus();
+const PROVIDER_DISPLAY_NAMES = Object.freeze({
+  groq: 'Groq',
+  gemini: 'Gemini',
+  nvidia: 'NVIDIA NIM',
+  mistral: 'Mistral',
+  claude: 'Claude'
 });
+
+const PROVIDER_ESTIMATED_COST_PER_REQ = Object.freeze({
+  groq: 0,
+  gemini: 0,
+  nvidia: 0,
+  mistral: 0.0004,
+  claude: 0.0015
+});
+
+// Initialisation
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('DOMContentLoaded', async () => {
+    await loadSettings();
+    setupEventListeners();
+    checkApiConnection();
+    checkSchemaStatus();
+    await loadProviderStats();
+  });
+}
 
 // Charger les paramètres depuis le stockage
 async function loadSettings() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return;
   const result = await chrome.storage.sync.get(['enabled', 'captureImages', 'selectedProvider', 'thinkingMode', 'autoMode']);
 
   state.enabled = result.enabled || false;
@@ -69,25 +98,42 @@ function setupEventListeners() {
   }
 
   // Bouton Analyser
-  elements.analyzeBtn.addEventListener('click', analyzeQuiz);
+  if (elements.analyzeBtn) {
+    elements.analyzeBtn.addEventListener('click', analyzeQuiz);
+  }
 
   // Bouton Effacer
-  elements.clearBtn.addEventListener('click', clearHighlights);
+  if (elements.clearBtn) {
+    elements.clearBtn.addEventListener('click', clearHighlights);
+  }
 
   // Bouton Re-découvrir schéma
   if (elements.schemaRediscoverBtn) {
     elements.schemaRediscoverBtn.addEventListener('click', rediscoverSchema);
   }
 
+  // Bouton Reset Stats (F-ANA-03)
+  const resetBtn = elements.resetStatsBtn || (typeof document !== 'undefined' ? document.getElementById('resetStatsBtn') : null);
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async (e) => {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      await resetProviderStats();
+    });
+  }
+
   // Écouter les messages de progression depuis content.js
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === 'analysisProgress') {
-      showProgress(message.step, message.percent);
-    }
-  });
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message && message.action === 'analysisProgress') {
+        showProgress(message.step, message.percent);
+      }
+    });
+  }
 }
 
 async function saveSettings() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return;
   await chrome.storage.sync.set({
     enabled: state.enabled,
     captureImages: state.captureImages,
@@ -100,7 +146,7 @@ async function saveSettings() {
 // Afficher la progression dans la barre
 function showProgress(stepMessage, percent) {
   if (!elements.progressSection) return;
-  
+
   // Réinitialiser les couleurs d'erreur s'il y en avait
   elements.progressText.style.color = '';
   elements.progressBarFill.style.backgroundColor = '';
@@ -113,9 +159,10 @@ function showProgress(stepMessage, percent) {
 
 // Vérifier la connexion API (combien de clés configurées)
 async function checkApiConnection() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
   const keys = await chrome.storage.local.get([
     'groqApiKey', 'geminiApiKey', 'nvidiaApiKey',
-    'mistralApiKey', 'claudeApiKey', 'fireworksApiKey'
+    'mistralApiKey', 'claudeApiKey'
   ]);
 
   let configuredProviders = 0;
@@ -126,20 +173,228 @@ async function checkApiConnection() {
   }
 
   if (configuredProviders > 0) {
-    elements.statusDot.classList.add('connected');
-    elements.connectionStatus.innerHTML = `${configuredProviders} IA prête${configuredProviders > 1 ? 's' : ''}`;
+    if (elements.statusDot) elements.statusDot.classList.add('connected');
+    if (elements.connectionStatus) {
+      elements.connectionStatus.textContent = `${configuredProviders} IA prête${configuredProviders > 1 ? 's' : ''}`;
+    }
   } else {
-    elements.statusDot.classList.remove('connected');
-    elements.connectionStatus.textContent = 'Configuration requise';
+    if (elements.statusDot) elements.statusDot.classList.remove('connected');
+    if (elements.connectionStatus) {
+      elements.connectionStatus.textContent = 'Configuration requise';
+    }
   }
+}
+
+// ──────────────────────────────────────────────
+// F-ANA-03 : PROVIDER PERFORMANCE ANALYTICS
+// ──────────────────────────────────────────────
+
+function normalizeProviderMetrics(providerKey, rawBucket) {
+  const b = rawBucket && typeof rawBucket === 'object' ? rawBucket : {};
+  const requests = (typeof b.requests === 'number' && Number.isFinite(b.requests) && b.requests >= 0)
+    ? Math.round(b.requests)
+    : 0;
+
+  let successRate = 0;
+  if (typeof b.successRate === 'number' && Number.isFinite(b.successRate)) {
+    if (b.successRate > 0 && b.successRate <= 1 && !Number.isInteger(b.successRate) && b.successes === undefined) {
+      successRate = Math.round(b.successRate * 100);
+    } else {
+      successRate = Math.max(0, Math.min(100, Math.round(b.successRate)));
+    }
+  } else if (requests > 0 && typeof b.successes === 'number' && Number.isFinite(b.successes)) {
+    successRate = Math.max(0, Math.min(100, Math.round((b.successes / requests) * 100)));
+  } else if (requests > 0 && typeof b.failures === 'number' && Number.isFinite(b.failures)) {
+    successRate = Math.max(0, Math.min(100, Math.round(((requests - b.failures) / requests) * 100)));
+  }
+
+  let avgLatencyMs = 0;
+  if (typeof b.avgLatencyMs === 'number' && Number.isFinite(b.avgLatencyMs) && b.avgLatencyMs >= 0) {
+    avgLatencyMs = Math.round(b.avgLatencyMs);
+  } else if (requests > 0 && typeof b.totalLatencyMs === 'number' && Number.isFinite(b.totalLatencyMs) && b.totalLatencyMs >= 0) {
+    avgLatencyMs = Math.round(b.totalLatencyMs / requests);
+  }
+
+  let estimatedCostUsd = 0;
+  if (typeof b.estimatedCostUsd === 'number' && Number.isFinite(b.estimatedCostUsd) && b.estimatedCostUsd >= 0) {
+    estimatedCostUsd = b.estimatedCostUsd;
+  } else {
+    const keyLower = String(providerKey || '').trim().toLowerCase();
+    const unitCost = Object.prototype.hasOwnProperty.call(PROVIDER_ESTIMATED_COST_PER_REQ, keyLower)
+      ? PROVIDER_ESTIMATED_COST_PER_REQ[keyLower]
+      : 0;
+    estimatedCostUsd = Number((requests * unitCost).toFixed(4));
+  }
+
+  return {
+    provider: providerKey,
+    displayName: PROVIDER_DISPLAY_NAMES[String(providerKey || '').toLowerCase()] || String(providerKey || 'unknown'),
+    requests,
+    successRate,
+    avgLatencyMs,
+    estimatedCostUsd
+  };
+}
+
+function clearElementChildren(container) {
+  if (!container) return;
+  if (typeof container.replaceChildren === 'function') {
+    container.replaceChildren();
+    return;
+  }
+  while (container.firstChild) {
+    if (typeof container.removeChild === 'function') {
+      container.removeChild(container.firstChild);
+    } else {
+      break;
+    }
+  }
+  if (Array.isArray(container.children)) {
+    container.children.length = 0;
+  }
+  if (Array.isArray(container.childNodes)) {
+    container.childNodes.length = 0;
+  }
+}
+
+/**
+ * Affiche les statistiques de performance par provider dans le popup (F-ANA-03)
+ * en utilisant exclusivement document.createElement + textContent (zéro innerHTML).
+ */
+function renderProviderStats(rawStats, targetContainer = null) {
+  const container = targetContainer ||
+    elements.providerStatsList ||
+    (typeof document !== 'undefined' && typeof document.getElementById === 'function'
+      ? document.getElementById('providerStatsList')
+      : null);
+
+  if (!container || typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    return [];
+  }
+
+  clearElementChildren(container);
+
+  const providersObj = (rawStats && typeof rawStats === 'object')
+    ? (rawStats.providers && typeof rawStats.providers === 'object' ? rawStats.providers : rawStats)
+    : {};
+
+  const ignoredTopKeys = new Set(['totals', 'lastUpdatedAt', 'success', 'error']);
+  const rows = [];
+
+  for (const key of Object.keys(providersObj)) {
+    if (ignoredTopKeys.has(key) || !Object.prototype.hasOwnProperty.call(providersObj, key)) {
+      continue;
+    }
+    const bucket = providersObj[key];
+    if (!bucket || typeof bucket !== 'object') continue;
+    const normalized = normalizeProviderMetrics(key, bucket);
+    if (normalized.requests <= 0 && bucket.requests === undefined && bucket.successRate === undefined && bucket.avgLatencyMs === undefined) {
+      continue;
+    }
+    rows.push(normalized);
+  }
+
+  if (rows.length === 0) {
+    const emptyEl = document.createElement('p');
+    emptyEl.className = 'stats-empty';
+    emptyEl.id = 'providerStatsEmpty';
+    emptyEl.textContent = 'Aucune requête enregistrée';
+    container.appendChild(emptyEl);
+    return [];
+  }
+
+  rows.forEach((metric) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'stats-row';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'stats-provider-name';
+    nameEl.textContent = metric.displayName;
+
+    const metricsGroupEl = document.createElement('span');
+    metricsGroupEl.className = 'stats-metrics';
+
+    const reqEl = document.createElement('span');
+    reqEl.className = 'stats-req';
+    reqEl.textContent = `${metric.requests} req`;
+
+    const rateEl = document.createElement('span');
+    rateEl.className = 'stats-rate';
+    rateEl.textContent = `${metric.successRate}%`;
+
+    const latencyEl = document.createElement('span');
+    latencyEl.className = 'stats-latency';
+    latencyEl.textContent = `${metric.avgLatencyMs}ms`;
+
+    const costEl = document.createElement('span');
+    costEl.className = 'stats-cost';
+    const costStr = metric.estimatedCostUsd === 0
+      ? '$0.00'
+      : `$${metric.estimatedCostUsd.toFixed(4)}`;
+    costEl.textContent = costStr;
+
+    metricsGroupEl.appendChild(reqEl);
+    metricsGroupEl.appendChild(rateEl);
+    metricsGroupEl.appendChild(latencyEl);
+    metricsGroupEl.appendChild(costEl);
+
+    rowEl.appendChild(nameEl);
+    rowEl.appendChild(metricsGroupEl);
+    container.appendChild(rowEl);
+  });
+
+  return rows;
+}
+
+async function loadProviderStats(targetContainer = null) {
+  if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+    renderProviderStats(null, targetContainer);
+    return null;
+  }
+
+  try {
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'getProviderStats' }, (resp) => {
+        if (chrome.runtime && chrome.runtime.lastError) {
+          resolve(null);
+        } else {
+          resolve(resp || null);
+        }
+      });
+    });
+
+    const stats = response && response.stats
+      ? response.stats
+      : (response && response.providers ? response : null);
+    renderProviderStats(stats, targetContainer);
+    return stats;
+  } catch (e) {
+    renderProviderStats(null, targetContainer);
+    return null;
+  }
+}
+
+async function resetProviderStats(targetContainer = null) {
+  if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+    await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'resetProviderStats' }, (resp) => {
+        void chrome.runtime?.lastError;
+        resolve(resp || null);
+      });
+    });
+  }
+  renderProviderStats(null, targetContainer);
+  return true;
 }
 
 // Analyser le quiz
 async function analyzeQuiz() {
-  state.hasError = false; // Réinitialisation du flag d'erreur
-  if (elements.progressSection) elements.progressSection.style.display = 'block'; // S'assurer que la progression est affichée
-  elements.analyzeBtn.disabled = true;
-  elements.analyzeBtn.textContent = '⏳ Analyse en cours...';
+  state.hasError = false;
+  if (elements.progressSection) elements.progressSection.style.display = 'block';
+  if (elements.analyzeBtn) {
+    elements.analyzeBtn.disabled = true;
+    elements.analyzeBtn.textContent = '⏳ Analyse en cours...';
+  }
   showProgress('Initialisation de la page...', 5);
 
   try {
@@ -177,12 +432,15 @@ async function analyzeQuiz() {
     }
   } catch (error) {
     showError(error.message);
-    state.hasError = true; // Flag d'erreur pour empêcher la dissimulation de l'UX/UI
+    state.hasError = true;
   } finally {
-    elements.analyzeBtn.disabled = false;
-    elements.analyzeBtn.textContent = '🔍 Trouver les Réponses';
-    
-    // Masquer la progression après 2.5s uniquement s'il n'y a pas d'erreur
+    if (elements.analyzeBtn) {
+      elements.analyzeBtn.disabled = false;
+      elements.analyzeBtn.textContent = '🔍 Trouver les Réponses';
+    }
+
+    await loadProviderStats();
+
     if (!state.hasError) {
       setTimeout(() => {
         if (elements.progressSection) elements.progressSection.style.display = 'none';
@@ -331,4 +589,20 @@ async function rediscoverSchema() {
     elements.schemaRediscoverBtn.disabled = false;
     elements.schemaRediscoverBtn.textContent = '🔄';
   }
+}
+
+const PopupAPI = {
+  loadProviderStats,
+  renderProviderStats,
+  resetProviderStats,
+  normalizeProviderMetrics,
+  checkApiConnection,
+  loadSettings
+};
+
+if (typeof window !== 'undefined') {
+  window.SafeExmPopup = PopupAPI;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = PopupAPI;
 }
