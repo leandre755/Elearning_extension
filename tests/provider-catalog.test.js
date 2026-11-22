@@ -100,14 +100,14 @@ async function withMockEnv({ fetchHandler, storageInit } = {}, run) {
 // ===========================================================================
 // 1. Catalog integrity & exclusion guarantees
 // ===========================================================================
-test('Catalog integrity: 40 total providers (5 core + 35 catalog), OS/OAuth excluded, unique apiKeyFields', () => {
+test('Catalog integrity: 41 total providers (5 core + 36 catalog), OS/OAuth excluded, unique apiKeyFields', () => {
   const { ProviderCatalog, QuizProviders } = loadModules();
 
   const extraKeys = Object.keys(ProviderCatalog.EXTRA_PROVIDERS);
   const allKeys = Object.keys(QuizProviders.PROVIDERS);
 
-  assert.equal(extraKeys.length, 35, `Expected 35 extra providers, got ${extraKeys.length}`);
-  assert.equal(allKeys.length, 40, `Expected 40 total providers, got ${allKeys.length}`);
+  assert.equal(extraKeys.length, 36, `Expected 36 extra providers, got ${extraKeys.length}`);
+  assert.equal(allKeys.length, 41, `Expected 41 total providers, got ${allKeys.length}`);
 
   for (const excluded of ['openai', 'vertex', 'antigravity']) {
     assert.equal(Object.prototype.hasOwnProperty.call(ProviderCatalog.EXTRA_PROVIDERS, excluded), false, `${excluded} must stay excluded`);
@@ -228,6 +228,11 @@ test('URL normalization, base URL resolution, and isProviderConfigured contracts
     providerConfigs: { anthropic_compatible: { baseUrl: 'http://127.0.0.1:8082/v1' } }
   }), true);
 
+  assert.equal(QuizProviders.resolveProviderBaseUrl('fcc_local', null), 'http://127.0.0.1:8082/v1');
+  assert.equal(QuizProviders.resolveProviderBaseUrl('fcc_local', { baseUrl: 'http://localhost:8082' }), 'http://localhost:8082/v1');
+  assert.equal(QuizProviders.isProviderConfigured('fcc_local', {}), false);
+  assert.equal(QuizProviders.isProviderConfigured('fcc_local', { providerConfigs: { fcc_local: { enabled: false } } }), false);
+  assert.equal(QuizProviders.isProviderConfigured('fcc_local', { providerConfigs: { fcc_local: { enabled: true } } }), true);
   assert.equal(QuizProviders.isProviderConfigured('ollama', {}), false);
   assert.equal(QuizProviders.isProviderConfigured('ollama', { providerConfigs: { ollama: { enabled: false } } }), false);
   assert.equal(QuizProviders.isProviderConfigured('ollama', { providerConfigs: { ollama: { enabled: true } } }), true);
@@ -310,6 +315,16 @@ test('QuizProviders.callProvider routes headers, URLs, max_completion_tokens, An
     assert.equal(call.headers['x-api-key'], 'tok-ac');
     assert.equal(call.headers.Authorization, undefined);
 
+    // fcc_local with empty key uses fallback static key ('fcc-local') & Anthropic /v1/messages on 127.0.0.1:8082
+    const fccRes = await QuizProviders.callProvider('fcc_local', '', 'antigravity/gemini-4-hydrogen', 'Ping', [], {
+      providerConfig: { enabled: true }
+    });
+    assert.equal(fccRes, 'claude-ok');
+    call = fetchCalls.at(-1);
+    assert.equal(call.url, 'http://127.0.0.1:8082/v1/messages');
+    assert.equal(call.headers['x-api-key'], 'fcc-local');
+    assert.equal(call.headers.Authorization, 'Bearer fcc-local');
+
     // ollama local with empty key uses fallback static key & /v1 normalization
     await QuizProviders.callProvider('ollama', '', 'qwen3.8:27b', 'Ping', [], {
       providerConfig: { enabled: true }
@@ -330,6 +345,15 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
     fetchHandler: async (req) => {
       if (req.url === 'https://openrouter.ai/api/v1/models') {
         return { status: 200, body: { data: [{ id: 'openrouter/auto', context_length: 128000 }] } };
+      }
+      if (req.url === 'http://127.0.0.1:8082/v1/models') {
+        return {
+          status: 200,
+          body: {
+            object: 'list',
+            data: [{ id: 'antigravity/gemini-4-hydrogen', context_length: 1048576 }]
+          }
+        };
       }
       if (req.url === 'http://localhost:11434/v1/models') {
         return { status: 200, body: { data: [{ id: 'qwen3.8:27b', name: 'Qwen 3.8 27B' }] } };
@@ -376,6 +400,12 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
     const orModels = await ModelRegistry.syncProviderModels('open_router', 'tok-or', null, { force: true });
     assert.deepEqual(orModels.map(m => m.id), ['openrouter/auto']);
 
+    const fccModels = await ModelRegistry.syncProviderModels('fcc_local', '', { enabled: true }, { force: true });
+    assert.deepEqual(fccModels.map(m => m.id), ['antigravity/gemini-4-hydrogen']);
+    assert.equal(fccModels[0].free, true);
+    assert.equal(fccModels[0].contextWindow, 1048576);
+    assert.equal(fccModels[0].vision, true);
+
     const ollamaModels = await ModelRegistry.syncProviderModels('ollama', '', { enabled: true }, { force: true });
     assert.deepEqual(ollamaModels.map(m => m.id), ['qwen3.8:27b']);
     assert.equal(ollamaModels[0].free, true);
@@ -396,6 +426,7 @@ test('ModelRegistry.syncProviderModels parses xAI, Together, GitHub Models, Clou
       baseUrl: 'https://claude-proxy.example.com/v1'
     }, { force: true });
     assert.deepEqual(acModels.map(m => m.id), ['claude-custom-1']);
+    assert.equal(acModels[0].contextWindow, 200000);
 
     const arModels = await ModelRegistry.syncProviderModels('agentrouter', 'tok-ar', null, { force: true });
     assert.ok(Array.isArray(arModels) && arModels.length >= QuizProviders.PROVIDERS.agentrouter.textModels.length);
@@ -411,10 +442,16 @@ test('background.js Anti-SSRF allows static/regex/configured origins & scoped lo
 
   const configs = {
     openai_compatible: { baseUrl: 'https://llm-gateway.example.com/v1' },
-    anthropic_compatible: { baseUrl: 'http://127.0.0.1:8082/v1' },
+    fcc_local: { enabled: true },
     ollama: { enabled: true },
     lmstudio: { enabled: false }
   };
+
+  assert.equal(
+    Background.isAllowedLLMUrl(new URL('http://127.0.0.1:8082/v1/messages'), { fcc_local: { enabled: false } }),
+    false,
+    'Disabled fcc_local must not allow 127.0.0.1:8082'
+  );
 
   // Positive controls
   for (const allowed of [
@@ -550,9 +587,16 @@ test('BackgroundAgent._callLLMWithTools routes agentrouter, anthropic_compatible
       providerConfigs: {
         anthropic_compatible: { baseUrl: 'https://claude-proxy.example.com/v1' },
         cloudflare: { accountId: 'cf-acc-77' },
+        fcc_local: { enabled: true },
         ollama: { enabled: true }
       }
     };
+
+    const fcc = await BackgroundAgent._callLLMWithTools('fcc_local', apiKeys, 'antigravity/gemini-4-hydrogen', history, [], dummyTools);
+    assert.equal(fcc.toolCalls[0].name, 'answer_quiz');
+    assert.equal(fetchCalls.at(-1).url, 'http://127.0.0.1:8082/v1/messages');
+    assert.equal(fetchCalls.at(-1).headers['x-api-key'], 'fcc-local');
+    assert.equal(fetchCalls.at(-1).headers.Authorization, 'Bearer fcc-local');
 
     const ar = await BackgroundAgent._callLLMWithTools('agentrouter', apiKeys, 'claude-fable-5-2', history, [], dummyTools);
     assert.equal(ar.toolCalls[0].name, 'answer_quiz');

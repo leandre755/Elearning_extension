@@ -2556,7 +2556,7 @@ const ModelRegistry = (() => {
     return /vision|-vl\b|gpt-5|claude-|gemini-|gemma-4|grok-4|kimi-k3|glm-5|qwen3\.8/i.test(id);
   }
 
-  function _extractOpenAIContextWindow(rawObj) {
+  function _extractOpenAIContextWindow(rawObj, fallback = 128000) {
     const raw = Number(
       rawObj?.context_length ||
       rawObj?.context_window ||
@@ -2564,7 +2564,7 @@ const ModelRegistry = (() => {
       rawObj?.max_input_tokens ||
       rawObj?.input_token_limit
     );
-    return Number.isFinite(raw) && raw > 0 ? raw : 128000;
+    return Number.isFinite(raw) && raw > 0 ? raw : fallback;
   }
 
   /**
@@ -2616,10 +2616,10 @@ const ModelRegistry = (() => {
         .map(m => ({
           id: m.id,
           label: m.display_name || m.name || m.id,
-          contextWindow: Number(m.max_input_tokens) || 200000,
+          contextWindow: _extractOpenAIContextWindow(m, 200000),
           maxOutputTokens: Number(m.max_output_tokens) || 8192,
           vision: m.capabilities?.image_input === true || _inferModelVision(m.id, m),
-          free: false
+          free: Boolean(provider?.local)
         }));
     } catch (e) {
       clearTimeout(timer);

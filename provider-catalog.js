@@ -799,6 +799,37 @@ const ProviderCatalog = (() => {
       ]
     },
 
+    fcc_local: {
+      name: 'FreeClaudeCode (Local)',
+      type: 'claude',
+      category: 'local',
+      local: true,
+      tierLabel: 'Local',
+      baseUrl: 'http://127.0.0.1:8082/v1',
+      apiKeyField: 'fccLocalApiKey',
+      staticApiKey: 'fcc-local',
+      keyPlaceholder: 'Optionnelle (ANTHROPIC_AUTH_TOKEN si activé)',
+      baseUrlPlaceholder: 'http://127.0.0.1:8082/v1',
+      supportsCustomBaseUrl: true,
+      allowsLoopbackBaseUrl: true,
+      normalizeV1: true,
+      messagesPath: '/messages',
+      sendBearerAuth: true,
+      defaultTextModel: 'nvidia_nim/nvidia/nemotron-3-super-120b-a12b',
+      defaultVisionModel: 'antigravity/gemini-4-hydrogen',
+      textModels: [
+        modelEntry('nvidia_nim/nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B (fcc-server)', 1048576, true),
+        modelEntry('antigravity/gemini-4-hydrogen', 'Antigravity Gemini 4 Hydrogen (fcc-server)', 1048576, true),
+        modelEntry('claude-fable-5-2', 'Claude Fable 5.2 (fcc-server)', 1000000, true),
+        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5 (fcc-server)', 1000000, true)
+      ],
+      visionModels: [
+        modelEntry('antigravity/gemini-4-hydrogen', 'Antigravity Gemini 4 Hydrogen Vision (fcc-server)', 1048576, true),
+        modelEntry('nvidia_nim/nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B Vision (fcc-server)', 1048576, true),
+        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5 Vision (fcc-server)', 1000000, true)
+      ]
+    },
+
     lmstudio: {
       name: 'LM Studio',
       type: 'openai-compatible',
