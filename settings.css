@@ -131,14 +131,6 @@ body {
   gap: 2px;
 }
 
-.brand-tag {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.10em;
-  color: var(--ink-muted);
-  text-transform: uppercase;
-}
-
 .page-header h1 {
   font-family: var(--font-display);
   font-size: 32px;
@@ -261,15 +253,6 @@ body {
 
 .card-header {
   margin-bottom: 16px;
-}
-
-.card-kicker {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.09em;
-  color: var(--ink-muted);
-  margin-bottom: 4px;
 }
 
 .card-title-row {
