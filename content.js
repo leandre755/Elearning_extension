@@ -1108,6 +1108,7 @@
       // Call HighlightManager API (preserve existing connected highlights in Auto Mode Delta)
       await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
         stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion,
+        showConfidenceBadge: effectiveSettings.showConfidenceBadge !== false,
         append: Boolean(isAuto)
       });
 

@@ -795,6 +795,44 @@ test('highlight-manager.js: confidence badges (high/medium/low + crossValidation
   await HM.applyHighlights(questions, answers, { stealthLevel: 'ultra-furtif' });
   assert.equal(HM.getActiveBadges().length, 0, 'ultra-furtif must not inject any badge DOM node');
   assert.equal(questions[0].options[0].labelElement.children.length, 1, 'No badge child in ultra-furtif mode');
+
+  // Setting toggle: showConfidenceBadge: false hides all percentage badges even in furtif/glow while preserving highlights
+  await HM.applyHighlights(questions, answers, { stealthLevel: 'furtif', showConfidenceBadge: false });
+  assert.equal(HM.getActiveBadges().length, 0, 'showConfidenceBadge: false must inject 0 badges in furtif mode');
+  assert.equal(questions[0].options[0].labelElement.children.length, 1, 'No badge child when showConfidenceBadge is false');
+  assert.ok(questions[0].options[0].labelElement.style.borderLeft, 'Option highlight must remain active when badges are disabled');
+
+  await HM.applyHighlights(questions, answers, { stealthLevel: 'glow', showConfidenceBadge: false });
+  assert.equal(HM.getActiveBadges().length, 0, 'showConfidenceBadge: false must inject 0 badges in glow mode');
+
+  // ConfigCache fallback when options.showConfidenceBadge is omitted
+  const { sandbox: sbCache, doc: docCache } = createSandboxEnvironment({
+    config: { highlightDiscretion: 'furtif', highlightColor: '#00b4ff', showConfidenceBadge: false }
+  });
+  sbCache.SafeExm = { DOMExtractor: { isElementVisible: () => true } };
+  loadScriptInSandbox('highlight-manager.js', sbCache);
+  const HMCache = sbCache.SafeExm.HighlightManager;
+  const qCacheEl = docCache.createElement('div');
+  const lblCache = docCache.createElement('label');
+  const inpCache = docCache.createElement('input');
+  lblCache.appendChild(inpCache);
+  qCacheEl.appendChild(lblCache);
+  docCache.body.appendChild(qCacheEl);
+  const qCache = [{ index: 1, questionType: 'single_choice', element: qCacheEl, options: [{ element: inpCache, labelElement: lblCache }] }];
+  const aCache = [{ questionIndex: 0, optionIndices: [0], confidence: 100 }];
+
+  await HMCache.applyHighlights(qCache, aCache, { stealthLevel: 'furtif' });
+  assert.equal(HMCache.getActiveBadges().length, 0, 'ConfigCache showConfidenceBadge: false must suppress badges');
+
+  await HMCache.applyHighlights(qCache, aCache, { stealthLevel: 'furtif', showConfidenceBadge: true });
+  assert.equal(HMCache.getActiveBadges().length, 1, 'Explicit showConfidenceBadge: true must render badge');
+  assert.ok(HMCache.getActiveBadges()[0].textContent.includes('100%'));
+
+  // Wiring check: settings.html exposes #showConfidenceBadge and providers.js caches it in SYNC_KEYS
+  const settingsHtml = fs.readFileSync(path.join(TARGET_ROOT, 'settings.html'), 'utf8');
+  const providersJs = fs.readFileSync(path.join(TARGET_ROOT, 'providers.js'), 'utf8');
+  assert.ok(settingsHtml.includes('id="showConfidenceBadge"'), 'settings.html must expose #showConfidenceBadge');
+  assert.ok(providersJs.includes("'showConfidenceBadge'"), 'providers.js SYNC_KEYS must include showConfidenceBadge');
 });
 
 // ──────────────────────────────────────────────

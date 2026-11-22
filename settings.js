@@ -45,6 +45,7 @@ const elements = {
   highlightPreviewElement: document.getElementById('highlightPreviewElement'),
   discretionDescription: document.getElementById('discretionDescription'),
   colorCustomizerRow: document.getElementById('colorCustomizerRow'),
+  showConfidenceBadge: document.getElementById('showConfidenceBadge'),
 
   // Wave 1 / Wave 2 settings (local storage)
   domainPreset: document.getElementById('domainPreset'),
@@ -189,7 +190,7 @@ async function loadSettings() {
     'customQuestionSelector', 'customAnswerSelector',
     'highlightColor', 'highlightIntensity',
     'providerOrder', 'customModels', 'agenticSearch', 'autoMode',
-    'highlightDiscretion'
+    'highlightDiscretion', 'showConfidenceBadge'
   ]);
 
   // S1 — API keys + behavior options are stored in local storage
@@ -245,6 +246,10 @@ async function loadSettings() {
   const discretionInt = discretionStringToInt[discretionStr] || 2;
   elements.discretionSlider.value = discretionInt;
   updateDiscretionUI();
+
+  if (elements.showConfidenceBadge) {
+    elements.showConfidenceBadge.checked = syncSettings.showConfidenceBadge !== false;
+  }
 
   if (localSettings.contextFiles) {
     uploadedFiles = localSettings.contextFiles;
@@ -945,7 +950,8 @@ async function saveSettings() {
       customAnswerSelector: elements.customAnswerSelector.value,
       highlightColor: elements.highlightColor.value,
       highlightIntensity: parseFloat(elements.highlightIntensity.value),
-      highlightDiscretion: discretionStr
+      highlightDiscretion: discretionStr,
+      showConfidenceBadge: elements.showConfidenceBadge ? elements.showConfidenceBadge.checked : true
     });
 
     showStatus('Enregistré.', 'success');

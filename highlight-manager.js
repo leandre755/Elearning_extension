@@ -149,6 +149,34 @@
   }
 
   /**
+   * Détermine si le badge de pourcentage de confiance doit être affiché.
+   * @param {Object} [options]
+   * @returns {boolean}
+   */
+  function resolveShowConfidenceBadge(options) {
+    if (options && typeof options === 'object' && typeof options.showConfidenceBadge === 'boolean') {
+      return options.showConfidenceBadge;
+    }
+    if (
+      _storedHighlightData &&
+      _storedHighlightData.options &&
+      typeof _storedHighlightData.options === 'object' &&
+      typeof _storedHighlightData.options.showConfidenceBadge === 'boolean'
+    ) {
+      return _storedHighlightData.options.showConfidenceBadge;
+    }
+    try {
+      if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.get === 'function') {
+        if (!ConfigCache.isInitialized || ConfigCache.isInitialized()) {
+          const cached = ConfigCache.get('showConfidenceBadge');
+          if (typeof cached === 'boolean') return cached;
+        }
+      }
+    } catch (e) { /* use default */ }
+    return true;
+  }
+
+  /**
    * Calcule le palier de confiance ('high' >= 80, 'medium' 50..79, 'low' < 50).
    * @param {Object|number|string} answerOrConfidence
    * @returns {'high'|'medium'|'low'|null}
@@ -563,8 +591,14 @@
    * Zéro innerHTML, zéro signature DOM statique (stockage WeakMap + Set).
    * En mode ultra-furtif, n'injecte aucun nœud DOM.
    */
-  function createConfidenceBadge(answer, targetElement, explicitDiscretion = null) {
+  function createConfidenceBadge(answer, targetElement, explicitDiscretion = null, explicitShowBadge = null) {
     if (!answer || typeof answer !== 'object') return null;
+    const showBadge = typeof explicitShowBadge === 'boolean'
+      ? explicitShowBadge
+      : resolveShowConfidenceBadge();
+    if (!showBadge) {
+      return null;
+    }
     const discretion = normalizeDiscretionLevel(explicitDiscretion) || resolveDiscretionLevel();
     if (discretion === 'ultra-furtif') {
       return null;
@@ -950,7 +984,8 @@
       badgeTarget = question.element;
     }
 
-    const badge = createConfidenceBadge(answer, badgeTarget || question.element, discretion);
+    const showConfidenceBadge = resolveShowConfidenceBadge(options);
+    const badge = createConfidenceBadge(answer, badgeTarget || question.element, discretion, showConfidenceBadge);
     return {
       highlightedCount,
       badge,

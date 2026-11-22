@@ -12,7 +12,7 @@ const ConfigCache = (() => {
   const SYNC_KEYS = [
     'captureImages', 'imageMinSize', 'imageQuality',
     'contextText', 'customQuestionSelector', 'customAnswerSelector',
-    'highlightColor', 'highlightIntensity', 'highlightDiscretion',
+    'highlightColor', 'highlightIntensity', 'highlightDiscretion', 'showConfidenceBadge',
     'providerOrder', 'customModels', 'agenticSearch', 'autoMode', 'enabled'
   ];
 
