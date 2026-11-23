@@ -23,7 +23,7 @@ background.js (Service Worker MV3)
 
 | Fichier | Rôle | Contexte d'exécution |
 |---|---|---|
-| `manifest.json` | Déclaration MV3, permissions (`tabs`, `activeTab`, `storage`, `scripting`, `notifications`, `contextMenus`) | Extension |
+| `manifest.json` | Déclaration MV3, permissions (`tabs`, `storage`, `scripting`, `notifications`, `contextMenus`) | Extension |
 | `loader.js` | Détecteur léger injecté sur toutes les pages ; déclenche l'injection du cœur à la demande | Content script |
 | `background.js` | Service worker : routage des messages, mutex d'injection, proxy LLM/images (Anti-SSRF), `sanitizeUrlForLog()`, lecture de `system.md` | Service worker |
 | `providers.js` | `ConfigCache`, `ModelRegistry` (découverte dynamique + TTL 24h), `QuizProviders` (Gemini, Claude, Groq, Mistral/Codestral, NVIDIA NIM) avec fallback interne et thinking natif | Service worker & Content script |
@@ -38,6 +38,7 @@ background.js (Service Worker MV3)
 | `content.js` | Orchestrateur côté page, pré-chauffage `preWarmProviders`, auto-submit opt-in (`F-AUTO-03`) + parseur multi-stratégies de réponses XML `<quiz_answers>` | Content script |
 | `content.css` | Styles injectés de base | Content script |
 | `system.md` | Prompt système détaché + few-shots XML (servi uniquement via message au service worker) | Ressource interne |
+| `theme-init.js` | Synchronisation thème Papier/Ardoise/système sans FOUC (CSP-safe MV3) | Popup & Options |
 | `popup.html` / `popup.js` / `popup.css` | Interface rapide (bouton d'analyse, barre de progression, état fournisseurs/erreurs) | Popup extension |
 | `settings.html` / `settings.js` / `settings.css` | Page d'options (`options_page`), clés API, priorité providers, import PDF/DOCX | Options extension |
 | `lib/` | Bibliothèques vendored (`pdf.min.js`, `pdf.worker.min.js`, `mammoth.browser.min.js`) — non modifiables | Options extension |

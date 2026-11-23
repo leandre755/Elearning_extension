@@ -9,6 +9,9 @@
 }
 
 :root {
+  color-scheme: light dark;
+  accent-color: var(--n3-blue);
+
   /* Light Phase — Archival Bone Paper */
   --paper-base: #F5F2EB;
   --paper-surface: #EFECE3;
@@ -17,9 +20,10 @@
 
   --ink-primary: #1A1918;
   --ink-secondary: #4A4743;
-  --ink-muted: #706B64;
+  --ink-muted: #625D57;
 
   --border-subtle: #D5CFC2;
+  --border-control: #847E74;
   --border-strong: #1A1918;
   --shadow-hard: rgba(26, 25, 24, 0.14);
 
@@ -28,18 +32,70 @@
   --n3-blue: #3B82F6;
   --n3-cobalt: #2563EB;
   --n3-gradient: linear-gradient(135deg, #38BDF8 0%, #3B82F6 52%, #2563EB 100%);
+  --n3-gradient-cta: linear-gradient(135deg, #0369A1 0%, #2563EB 54%, #1D4ED8 100%);
+  --progress-track-fill: var(--n3-gradient-cta);
   --accent-text: #1D4ED8;
   --accent-soft: rgba(59, 130, 246, 0.10);
 
-  --success-color: #15803D;
+  --success-color: #166534;
   --error-color: #B91C1C;
-  --warning-color: #B45309;
+  --warning-color: #92400E;
+
+  --scrollbar-thumb: var(--border-control);
+  --scrollbar-track: var(--paper-base);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: auto;
 
   --font-display: 'Caveat Brush', cursive, system-ui, sans-serif;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(:has(> head > meta[name="color-scheme"][content="light"])) {
+    --paper-base: #0D0D0E;
+    --paper-surface: #141416;
+    --paper-inset: #080809;
+    --grid-line: rgba(126, 128, 132, 0.09);
+
+    --ink-primary: #E8EAED;
+    --ink-secondary: #A6A9AF;
+    --ink-muted: #91949A;
+
+    --border-subtle: #26272B;
+    --border-control: #6B6E76;
+    --border-strong: #E8EAED;
+    --shadow-hard: rgba(0, 0, 0, 0.55);
+
+    --accent-text: #38BDF8;
+    --accent-soft: rgba(56, 189, 248, 0.12);
+
+    --success-color: #4ADE80;
+    --error-color: #F87171;
+    --warning-color: #FBBF24;
+    --progress-track-fill: var(--n3-gradient);
+  }
+
+  :root:not([data-theme="light"]):not(:has(> head > meta[name="color-scheme"][content="light"])) .theme-icon-dark {
+    display: none;
+  }
+
+  :root:not([data-theme="light"]):not(:has(> head > meta[name="color-scheme"][content="light"])) .theme-icon-light {
+    display: block;
+  }
+}
+
+:root:has(> head > meta[name="color-scheme"][content="light"]),
+:root[data-theme="light"]:not([data-theme-mode="system"]) {
+  color-scheme: light;
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]),
+:root[data-theme="dark"]:not([data-theme-mode="system"]) {
+  color-scheme: dark;
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]),
 :root[data-theme="dark"] {
   /* Dark Phase — Obsidian Slate Inversion */
   --paper-base: #0D0D0E;
@@ -49,9 +105,10 @@
 
   --ink-primary: #E8EAED;
   --ink-secondary: #A6A9AF;
-  --ink-muted: #7E8084;
+  --ink-muted: #91949A;
 
   --border-subtle: #26272B;
+  --border-control: #6B6E76;
   --border-strong: #E8EAED;
   --shadow-hard: rgba(0, 0, 0, 0.55);
 
@@ -61,12 +118,23 @@
   --success-color: #4ADE80;
   --error-color: #F87171;
   --warning-color: #FBBF24;
+  --progress-track-fill: var(--n3-gradient);
 }
 
-* {
-  margin: 0;
-  padding: 0;
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+}
+
+body,
+h1,
+h2,
+h3,
+p,
+ul,
+ol {
+  margin: 0;
 }
 
 html {
@@ -81,10 +149,28 @@ html {
 body {
   width: 344px;
   font-family: var(--font-sans);
+  line-height: 1.4;
   background: transparent;
   color: var(--ink-primary);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+:where(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--n3-blue);
+  outline-offset: 2px;
 }
 
 .container {
@@ -118,7 +204,7 @@ header {
 
 .logo-title {
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 1.25rem;
   font-weight: 400;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -156,17 +242,18 @@ header {
 
 #connectionStatus {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.625rem;
   letter-spacing: 0.02em;
   color: var(--ink-secondary);
   font-weight: 500;
 }
 
 .icon-btn {
-  width: 26px;
-  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 4px;
   border-radius: 3px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   background: var(--paper-surface);
   color: var(--ink-secondary);
   display: inline-flex;
@@ -176,7 +263,7 @@ header {
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 
-.icon-btn:hover {
+.icon-btn:hover:not(:disabled) {
   border-color: var(--border-strong);
   color: var(--ink-primary);
 }
@@ -211,10 +298,10 @@ main {
   padding: 12px 16px;
   border-radius: 4px;
   border: 1px solid var(--n3-cobalt);
-  background: var(--n3-gradient);
+  background: var(--n3-gradient-cta);
   color: #FFFFFF;
   font-family: var(--font-display);
-  font-size: 19px;
+  font-size: 1.1875rem;
   font-weight: 400;
   letter-spacing: 0.01em;
   cursor: pointer;
@@ -223,18 +310,30 @@ main {
   justify-content: center;
   gap: 10px;
   box-shadow: 2px 2px 0 var(--shadow-hard);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.15s ease;
+  transition: box-shadow 0.12s ease, filter 0.15s ease;
 }
 
 .action-btn-massive:hover:not(:disabled) {
   filter: brightness(1.04);
-  transform: translate(-1px, -1px);
   box-shadow: 3px 3px 0 var(--shadow-hard);
 }
 
 .action-btn-massive:active:not(:disabled) {
-  transform: translate(1px, 1px);
   box-shadow: 1px 1px 0 var(--shadow-hard);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .action-btn-massive {
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.15s ease;
+  }
+
+  .action-btn-massive:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+  }
+
+  .action-btn-massive:active:not(:disabled) {
+    transform: translate(1px, 1px);
+  }
 }
 
 .action-btn-massive:disabled {
@@ -261,6 +360,10 @@ main {
   gap: 7px;
 }
 
+.progress-section[hidden] {
+  display: none;
+}
+
 .progress-info {
   display: flex;
   justify-content: space-between;
@@ -269,7 +372,7 @@ main {
 }
 
 .progress-text {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-primary);
   font-weight: 500;
   overflow: hidden;
@@ -277,27 +380,56 @@ main {
   white-space: nowrap;
 }
 
+.progress-text.is-error {
+  color: var(--error-color);
+}
+
 .progress-percentage {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--accent-text);
   font-weight: 600;
   flex-shrink: 0;
 }
 
-.progress-bar-container {
+progress.progress-bar {
+  appearance: none;
+  border: 1px solid var(--border-control);
+  display: block;
   width: 100%;
-  height: 4px;
+  height: 8px;
   background: var(--paper-inset);
   border-radius: 2px;
-  overflow: hidden;
+  overflow: clip;
+  --progress-bar-fill: var(--progress-track-fill);
 }
 
-.progress-bar-fill {
-  height: 100%;
-  background: var(--n3-gradient);
-  width: 0%;
-  transition: width 0.25s ease;
+progress.progress-bar.is-error {
+  --progress-bar-fill: var(--error-color);
+}
+
+progress.progress-bar::-webkit-progress-bar {
+  background: transparent;
+}
+
+progress.progress-bar::-webkit-progress-value {
+  background: var(--progress-bar-fill);
+  border-radius: 2px;
+}
+
+progress.progress-bar::-moz-progress-bar {
+  background: var(--progress-bar-fill);
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  progress.progress-bar::-webkit-progress-value {
+    transition: inline-size 0.25s ease;
+  }
+
+  progress.progress-bar::-moz-progress-bar {
+    transition: inline-size 0.25s ease;
+  }
 }
 
 /* Schema Status */
@@ -310,7 +442,11 @@ main {
   border: 1px solid var(--border-subtle);
   border-left: 3px solid var(--ink-muted);
   border-radius: 3px;
-  font-size: 12px;
+  font-size: 0.75rem;
+}
+
+.schema-status[hidden] {
+  display: none;
 }
 
 .schema-status.known {
@@ -345,20 +481,21 @@ main {
 
 .schema-btn {
   background: var(--paper-base);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-radius: 3px;
-  width: 24px;
-  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   color: var(--ink-secondary);
-  font-size: 13px;
+  font-size: 0.8125rem;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 
-.schema-btn:hover {
+.schema-btn:hover:not(:disabled) {
   border-color: var(--border-strong);
   color: var(--ink-primary);
 }
@@ -369,7 +506,6 @@ main {
   border: 1px solid var(--border-subtle);
   background: var(--paper-surface);
   border-radius: 3px;
-  overflow: hidden;
 }
 
 .shortcuts-accordion summary,
@@ -381,6 +517,7 @@ main {
   justify-content: space-between;
   align-items: center;
   list-style: none;
+  border-radius: 2px;
   transition: background-color 0.15s ease;
 }
 
@@ -396,7 +533,7 @@ main {
 
 .accordion-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -405,10 +542,30 @@ main {
 
 .accordion-chevron {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-muted);
   line-height: 1;
-  transition: transform 0.15s ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .accordion-chevron {
+    transition: transform 0.15s ease;
+  }
+
+  details::details-content {
+    transition: block-size 0.22s ease, content-visibility 0.22s ease;
+    transition-behavior: allow-discrete;
+  }
+}
+
+details::details-content {
+  interpolate-size: allow-keywords;
+  overflow: clip;
+  contain: layout;
+}
+
+details:not([open])::details-content {
+  block-size: 0;
 }
 
 details[open] .accordion-chevron {
@@ -425,7 +582,7 @@ details[open] .accordion-chevron {
 }
 
 .shortcuts-content p {
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--ink-secondary);
   display: flex;
   align-items: center;
@@ -441,44 +598,49 @@ details[open] .accordion-chevron {
 
 kbd {
   background: var(--paper-surface);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-bottom-width: 2px;
   border-radius: 2px;
   padding: 1px 4px;
-  font-size: 9px;
+  font-size: 0.5625rem;
   font-family: var(--font-mono);
   color: var(--ink-primary);
 }
 
 /* Stats Accordion */
-.stats-summary-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.stats-content-wrap {
+  border-top: 1px solid var(--border-subtle);
+  background: var(--paper-base);
+}
+
+.stats-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 10px 0;
 }
 
 .stats-reset-btn {
   background: transparent;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-radius: 2px;
   color: var(--ink-muted);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 0.5625rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 2px 6px;
+  min-height: 24px;
+  padding: 3px 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.stats-reset-btn:hover {
+.stats-reset-btn:hover:not(:disabled) {
   color: var(--error-color);
   border-color: var(--error-color);
 }
 
 .stats-content {
   padding: 8px 10px;
-  border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -489,7 +651,7 @@ kbd {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 0.6875rem;
   padding: 5px 7px;
   border-radius: 2px;
   background: var(--paper-surface);
@@ -507,7 +669,7 @@ kbd {
   gap: 7px;
   color: var(--ink-secondary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.625rem;
 }
 
 .stats-rate {
@@ -524,7 +686,7 @@ kbd {
 }
 
 .stats-empty {
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--ink-muted);
   text-align: center;
   padding: 4px 0;
@@ -551,10 +713,11 @@ footer {
   align-items: center;
   gap: 7px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--ink-secondary);
   user-select: none;
+  min-height: 24px;
 }
 
 .toggle-label input {
@@ -571,7 +734,7 @@ footer {
   height: 16px;
   background-color: var(--paper-inset);
   border-radius: 2px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
@@ -584,7 +747,13 @@ footer {
   top: 2px;
   background-color: var(--ink-secondary);
   border-radius: 1px;
-  transition: transform 0.2s ease, background-color 0.2s ease;
+  transition: background-color 0.2s ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toggle-custom::before {
+    transition: transform 0.2s ease, background-color 0.2s ease;
+  }
 }
 
 .toggle-label input:checked + .toggle-custom {
@@ -604,19 +773,20 @@ footer {
 
 .clear-btn {
   background: transparent;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   color: var(--ink-secondary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.625rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   cursor: pointer;
-  padding: 4px 8px;
+  min-height: 26px;
+  padding: 4px 9px;
   border-radius: 2px;
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.clear-btn:hover {
+.clear-btn:hover:not(:disabled) {
   border-color: var(--error-color);
   color: var(--error-color);
 }
@@ -631,10 +801,10 @@ footer {
   align-items: center;
   justify-content: space-between;
   padding: 7px 10px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-radius: 3px;
   background: var(--paper-surface);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--ink-primary);
   text-decoration: none;
@@ -648,7 +818,7 @@ footer {
 
 .link-arrow {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-muted);
 }
 
@@ -656,16 +826,70 @@ footer {
   color: var(--accent-text);
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
+/* Forced Colors (Windows High Contrast) */
+@media (forced-colors: active) {
+  :where(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible,
+  .toggle-label input:focus-visible + .toggle-custom {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .action-btn-massive {
+    background: ButtonFace;
+    color: ButtonText;
+    border: 2px solid ButtonText;
+    box-shadow: none;
+  }
+
+  .toggle-custom {
+    border: 1px solid ButtonText;
+    background: Canvas;
+  }
+
+  .toggle-custom::before {
+    background-color: ButtonText;
+  }
+
+  .toggle-label input:checked + .toggle-custom {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .toggle-label input:checked + .toggle-custom::before {
+    background-color: HighlightText;
+  }
+
+  progress.progress-bar {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  progress.progress-bar::-webkit-progress-value {
+    background: Highlight;
+  }
+
+  progress.progress-bar::-moz-progress-bar {
+    background: Highlight;
+  }
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* Scrollbar fallback for engines without standard scrollbar-color */
+@supports not (scrollbar-color: auto) {
+  :root {
+    scrollbar-width: auto;
+  }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
-  border-radius: 2px;
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
 }

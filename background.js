@@ -310,7 +310,36 @@ function getLocalConfigKeys() {
   return fallback;
 }
 
-let _lastPreWarmConfigSignature = null;
+const PREWARM_SIGNATURE_SESSION_KEY = '_lastPreWarmConfigSignature';
+let _lastPreWarmConfigSignatureFallback = null;
+
+async function getLastPreWarmSignature() {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session &&
+      typeof chrome.storage.session.get === 'function') {
+    try {
+      const data = await chrome.storage.session.get([PREWARM_SIGNATURE_SESSION_KEY]);
+      if (data && typeof data[PREWARM_SIGNATURE_SESSION_KEY] === 'string') {
+        return data[PREWARM_SIGNATURE_SESSION_KEY];
+      }
+      return null;
+    } catch {
+      /* fallback to in-memory copy when session storage is unavailable */
+    }
+  }
+  return _lastPreWarmConfigSignatureFallback;
+}
+
+async function setLastPreWarmSignature(signature) {
+  _lastPreWarmConfigSignatureFallback = signature;
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session &&
+      typeof chrome.storage.session.set === 'function') {
+    try {
+      await chrome.storage.session.set({ [PREWARM_SIGNATURE_SESSION_KEY]: signature });
+    } catch {
+      /* ignore session storage errors */
+    }
+  }
+}
 
 function handleTabRemoved(tabId) {
   _injectionsInProgress.delete(tabId);
@@ -447,8 +476,9 @@ async function handlePreWarmProviders(message = {}) {
     }
 
     const currentSignature = computePreWarmSignature(config);
-    const configChanged = _lastPreWarmConfigSignature !== null && _lastPreWarmConfigSignature !== currentSignature;
-    _lastPreWarmConfigSignature = currentSignature;
+    const prevSignature = await getLastPreWarmSignature();
+    const configChanged = prevSignature !== null && prevSignature !== currentSignature;
+    await setLastPreWarmSignature(currentSignature);
 
     const preWarmConfigArg = { ...config, ...rawOptions };
     Object.defineProperty(preWarmConfigArg, 'config', {
@@ -618,6 +648,18 @@ async function handleInjectPageBridge(message = {}, sender = {}) {
 // CORS Image Proxy & Runtime Messaging
 // ──────────────────────────────────────────────
 
+function sendAsyncRuntimeResponse(sendResponse, handler, formatError) {
+  (async () => {
+    try {
+      const result = await handler();
+      sendResponse(result);
+    } catch (error) {
+      sendResponse(formatError ? formatError(error) : { success: false, error: error.message });
+    }
+  })();
+  return true;
+}
+
 function handleRuntimeMessage(message, sender, sendResponse) {
   if (!message || typeof message !== 'object') {
     return false;
@@ -626,70 +668,70 @@ function handleRuntimeMessage(message, sender, sendResponse) {
   if (message.action === 'injectCoreScripts') {
     const tabId = sender?.tab?.id;
     if (tabId) {
-      injectCoreScripts(tabId)
-        .then(() => sendResponse({ success: true }))
-        .catch(error => sendResponse({ success: false, error: error.message }));
-    } else {
-      sendResponse({ success: false, error: 'tabId introuvable' });
+      return sendAsyncRuntimeResponse(sendResponse, async () => {
+        await injectCoreScripts(tabId);
+        return { success: true };
+      });
     }
-    return true; // Async response
+    sendResponse({ success: false, error: 'tabId introuvable' });
+    return true;
   }
 
   if (message.action === 'injectPageBridge') {
-    handleInjectPageBridge(message, sender)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleInjectPageBridge(message, sender),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
   }
 
   if (message.action === 'preWarmProviders') {
-    handlePreWarmProviders(message)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handlePreWarmProviders(message),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
   }
 
   if (message.action === 'getProviderStats') {
-    handleGetProviderStats()
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleGetProviderStats(),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
   }
 
   if (message.action === 'resetProviderStats') {
-    handleResetProviderStats()
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: sanitizeErrorMessage(error) }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleResetProviderStats(),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
   }
 
   if (message.action === 'fetchImage') {
-    handleFetchImage(message.url)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(sendResponse, () => handleFetchImage(message.url));
   }
-  
+
   if (message.action === 'fetchLLM') {
-    handleFetchLLM(message.url, message.options)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, networkError: true, error: error.message }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleFetchLLM(message.url, message.options),
+      error => ({ success: false, networkError: true, error: error.message })
+    );
   }
-  
+
   if (message.action === 'fetchSerpApi') {
-    handleFetchSerpApi(message.query, message.apiKey)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, networkError: true, error: error.message }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleFetchSerpApi(message.query, message.apiKey),
+      error => ({ success: false, networkError: true, error: error.message })
+    );
   }
 
   // SEC-05 : Charger system.md depuis le SW (hors web_accessible_resources)
   if (message.action === 'loadSystemPrompt') {
-    handleLoadSystemPrompt()
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(sendResponse, () => handleLoadSystemPrompt());
   }
 
   // Keep-alive pour empêcher le Service Worker d'être tué pendant de longs appels LLM
@@ -703,11 +745,10 @@ function handleRuntimeMessage(message, sender, sendResponse) {
 
   // Boucle de Feedback Post-Soumission (Agent 3.0)
   if (message.action === 'submitQuizFeedback') {
-    hydrateTrustedConfig(message.config)
-      .then(trustedConfig => BackgroundAgent.learnFromFeedback(message.feedbackData, trustedConfig))
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Async response
+    return sendAsyncRuntimeResponse(sendResponse, async () => {
+      const trustedConfig = await hydrateTrustedConfig(message.config);
+      return BackgroundAgent.learnFromFeedback(message.feedbackData, trustedConfig);
+    });
   }
 
   return false;
@@ -725,28 +766,25 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect)
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== 'solveQuiz') return;
 
-    port.onMessage.addListener((message) => {
-      if (message.action === 'solveQuiz' || message.action === 'analyzeDelta') {
-        (async () => {
+    port.onMessage.addListener(async (message) => {
+      if (message && (message.action === 'solveQuiz' || message.action === 'analyzeDelta')) {
+        try {
           const safeTask = (message.task && typeof message.task === 'object')
             ? { ...message.task, config: await hydrateTrustedConfig(message.task.config) }
             : message.task;
-          return BackgroundAgent.solve(safeTask);
-        })()
-          .then(result => {
-            try { port.postMessage(result); } catch (_) { /* port fermé côté content */ }
-          })
-          .catch(error => {
-            try {
-              port.postMessage({
-                success: false,
-                answers: [],
-                metadata: { questionsTotal: 0, answersFound: 0, totalDurationMs: 0 },
-                journal: [],
-                error: error.message
-              });
-            } catch (_) { /* port fermé côté content */ }
-          });
+          const result = await BackgroundAgent.solve(safeTask);
+          try { port.postMessage(result); } catch (_) { /* port fermé côté content */ }
+        } catch (error) {
+          try {
+            port.postMessage({
+              success: false,
+              answers: [],
+              metadata: { questionsTotal: 0, answersFound: 0, totalDurationMs: 0 },
+              journal: [],
+              error: error.message
+            });
+          } catch (_) { /* port fermé côté content */ }
+        }
       }
     });
   });
@@ -1128,23 +1166,15 @@ async function handleFetchImage(url) {
 
     console.log(`🖼️ Proxy fetch sécurisé: ${sanitizeUrlForLog(url).substring(0, 80)}...`);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout image
+    // Interdit les redirections 3xx (un redirect externe vers 169.254.169.254 / localhost contournerait le filtre).
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000), redirect: 'error' });
 
-    let blob, arrayBuffer;
-    try {
-      // Interdit les redirections 3xx (un redirect externe vers 169.254.169.254 / localhost contournerait le filtre).
-      const response = await fetch(url, { signal: controller.signal, redirect: 'error' });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      blob = await response.blob();
-      arrayBuffer = await blob.arrayBuffer();
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
+
+    const blob = await response.blob();
+    const arrayBuffer = await blob.arrayBuffer();
 
     const uint8Array = new Uint8Array(arrayBuffer);
     let mimeType = (blob.type || '').split(';')[0].trim().toLowerCase();
@@ -1261,6 +1291,15 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalle
     // Context Menus
     // ──────────────────────────────────────────────
     try {
+      if (chrome.contextMenus && typeof chrome.contextMenus.removeAll === 'function') {
+        await new Promise((resolve) => {
+          chrome.contextMenus.removeAll(() => {
+            void chrome.runtime?.lastError;
+            resolve();
+          });
+        });
+      }
+
       // Parent root menu
       chrome.contextMenus.create({
         id: "safe-exm-root",
@@ -1315,7 +1354,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalle
 if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.contextMenus.onClicked) {
   chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (!tab) return;
-    
+
     switch (info.menuItemId) {
       case 'cm-toggle-extension':
         await toggleExtension();
@@ -1328,17 +1367,31 @@ if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.contextMenus.
       case 'cm-toggle-auto-mode':
         await toggleAutoMode();
         break;
-        
+
       case 'cm-clear-highlights':
         try {
-          await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
-        } catch(e) { /* ignore if content script not loaded */ }
+          const resp = await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
+          if (resp && resp.success === false) {
+            showNotification(resp.error || 'Aucune marque à effacer sur cette page.');
+          } else {
+            showNotification('Marques effacées');
+          }
+        } catch (e) {
+          showNotification('Aucune marque à effacer sur cette page.');
+        }
         break;
 
       case 'cm-paste-answer':
         try {
-          await chrome.tabs.sendMessage(tab.id, { action: 'pasteAnswer' });
-        } catch(e) { /* ignore if content script not loaded */ }
+          const resp = await chrome.tabs.sendMessage(tab.id, { action: 'pasteAnswer' });
+          if (resp && resp.success === false) {
+            showNotification(resp.error || 'Aucune réponse texte disponible à coller.');
+          } else {
+            showNotification('Réponse collée');
+          }
+        } catch (e) {
+          showNotification('Impossible de coller la réponse sur cette page.');
+        }
         break;
     }
   });

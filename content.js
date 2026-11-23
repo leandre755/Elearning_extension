@@ -17,13 +17,31 @@
   let isEnabled = true;
   let pendingTextAnswers = [];
 
-  // Auto Mode Tracking
+  // Auto Mode Tracking & Observer (déclarés ici pour éviter toute TDZ)
   let _lastAutoContentHash = '';
   let _autoAnalysisRunning = false;
-
-  // Auto Mode Observer (déclaré ici pour éviter la TDZ lors du bootstrap)
+  let _clearGeneration = 0;
   let _autoModeObserver = null;
   let _autoModeDebounceTimer = null;
+  const _inFlightPortCancels = new Set();
+
+  function clearAutoModeDebounceTimer() {
+    if (_autoModeDebounceTimer) {
+      clearTimeout(_autoModeDebounceTimer);
+      _autoModeDebounceTimer = null;
+    }
+  }
+
+  function cancelOngoingAnalyses() {
+    _clearGeneration++;
+    clearAutoModeDebounceTimer();
+    for (const cancelFn of Array.from(_inFlightPortCancels)) {
+      try {
+        cancelFn();
+      } catch { /* ignore cancel hook error */ }
+    }
+    _inFlightPortCancels.clear();
+  }
 
   // F-AUTO-02 : Pre-Warm state (une seule fois par page)
   let _preWarmTriggered = false;
@@ -89,10 +107,15 @@
    * Active ou restaure de façon sérialisée et strictement opt-in le bridge réseau MAIN world.
    */
   function syncPassiveNetworkInterceptor(shouldEnable) {
-    const next = _passiveBridgeSyncPromise.then(
-      () => _performSyncPassiveNetworkInterceptor(shouldEnable),
-      () => _performSyncPassiveNetworkInterceptor(shouldEnable)
-    );
+    const prev = _passiveBridgeSyncPromise;
+    const next = (async () => {
+      try {
+        await prev;
+      } catch {
+        /* previous failure does not block next sync */
+      }
+      return _performSyncPassiveNetworkInterceptor(shouldEnable);
+    })();
     _passiveBridgeSyncPromise = next.catch(() => {});
     return next;
   }
@@ -126,13 +149,16 @@
 
       // Opt-in MAIN-world passive network interception bootstrap (non-blocking, zero await before ContentAPI export)
       if (isEnabled && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === 'function') {
-        Promise.resolve(chrome.storage.local.get(['passiveNetworkIntercept']))
-          .then((localBridgeCfg) => {
+        void (async () => {
+          try {
+            const localBridgeCfg = await chrome.storage.local.get(['passiveNetworkIntercept']);
             if (isExtensionEnabled() && localBridgeCfg && localBridgeCfg.passiveNetworkIntercept === true) {
-              syncPassiveNetworkInterceptor(true).catch(() => {});
+              await syncPassiveNetworkInterceptor(true);
             }
-          })
-          .catch(() => {});
+          } catch {
+            /* ignore passive bridge bootstrap errors */
+          }
+        })();
       }
     }
   } catch (e) {
@@ -239,14 +265,23 @@
       _autoModeObserver.disconnect();
       _autoModeObserver = null;
     }
-    if (_autoModeDebounceTimer) {
-      clearTimeout(_autoModeDebounceTimer);
-      _autoModeDebounceTimer = null;
-    }
+    clearAutoModeDebounceTimer();
     console.log('🤖 Auto Mode: Observateur arrêté.');
   }
 
   // Listen to configuration change to toggle Auto Mode, Panic abort & opt-in network bridge
+  function setExtensionEnabled(nextEnabled) {
+    isEnabled = Boolean(nextEnabled);
+    if (!isEnabled) {
+      cancelOngoingAnalyses();
+      cancelPendingAutoSubmit();
+      syncPassiveNetworkInterceptor(false).catch(() => {});
+      if (rootWin.SafeExm.HighlightManager) {
+        rootWin.SafeExm.HighlightManager.clearAllHighlights();
+      }
+    }
+  }
+
   if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.onChange === 'function') {
     ConfigCache.onChange((changes) => {
       if (changes.autoMode) {
@@ -263,14 +298,7 @@
         syncPassiveNetworkInterceptor(changes.passiveNetworkIntercept.newValue === true).catch(() => {});
       }
       if (changes.enabled) {
-        isEnabled = changes.enabled.newValue === true;
-        if (!isEnabled) {
-          cancelPendingAutoSubmit();
-          syncPassiveNetworkInterceptor(false).catch(() => {});
-          if (rootWin.SafeExm.HighlightManager) {
-            rootWin.SafeExm.HighlightManager.clearAllHighlights();
-          }
-        }
+        setExtensionEnabled(changes.enabled.newValue === true);
       }
     });
   }
@@ -278,13 +306,12 @@
   function triggerAutoAnalysis(reason) {
     if (!isExtensionEnabled() || _autoAnalysisRunning) return;
 
-    if (_autoModeDebounceTimer) {
-      clearTimeout(_autoModeDebounceTimer);
-    }
+    clearAutoModeDebounceTimer();
 
     _autoModeDebounceTimer = setTimeout(async () => {
+      _autoModeDebounceTimer = null;
       try {
-        if (!isQuizPage()) return;
+        if (!isExtensionEnabled() || !isQuizPage()) return;
 
         // Pilier 5: Détection de feedback
         if (!_feedbackSent && detectAndSendFeedback()) {
@@ -382,30 +409,27 @@
 
       switch (safeAction) {
         case 'toggleExtension':
-          isEnabled = Boolean(message.enabled);
-          if (!isEnabled) {
-            cancelPendingAutoSubmit();
-            syncPassiveNetworkInterceptor(false).catch(() => {});
-            rootWin.SafeExm.HighlightManager.clearAllHighlights();
-          }
+          setExtensionEnabled(message.enabled);
           console.log('🔄 Extension:', isEnabled ? 'activée' : 'désactivée');
           sendResponse({ success: true });
           break;
 
         case 'analyzeQuiz':
           console.log('🔍 Début analyse quiz...');
-          handleAnalyzeQuiz(message.settings, message.forceFallback)
-            .then(result => {
+          (async () => {
+            try {
+              const result = await handleAnalyzeQuiz(message.settings, message.forceFallback);
               console.log('📊 Résultat analyse:', result);
               sendResponse(result);
-            })
-            .catch(error => {
+            } catch (error) {
               console.error('❌ Erreur analyse:', error);
               sendResponse({ success: false, error: error.message });
-            });
+            }
+          })();
           return true;
 
         case 'clearHighlights':
+          cancelOngoingAnalyses();
           cancelPendingAutoSubmit();
           rootWin.SafeExm.HighlightManager.clearAllHighlights();
           sendResponse({ success: true });
@@ -413,21 +437,32 @@
 
         case 'discoverSchema':
           console.log('🔬 Découverte de schéma manuelle...');
-          handleDiscoverSchema()
-            .then(result => sendResponse(result))
-            .catch(error => sendResponse({ success: false, error: error.message }));
+          (async () => {
+            try {
+              const result = await handleDiscoverSchema();
+              sendResponse(result);
+            } catch (error) {
+              sendResponse({ success: false, error: error.message });
+            }
+          })();
           return true;
 
         case 'getSchemaStatus':
-          handleGetSchemaStatus()
-            .then(result => sendResponse(result))
-            .catch(error => sendResponse({ success: false, error: error.message }));
+          (async () => {
+            try {
+              const result = await handleGetSchemaStatus();
+              sendResponse(result);
+            } catch (error) {
+              sendResponse({ success: false, error: error.message });
+            }
+          })();
           return true;
 
-        case 'pasteAnswer':
-          handlePasteAnswer();
-          sendResponse({ success: true });
+        case 'pasteAnswer': {
+          const pasteResult = handlePasteAnswer();
+          sendResponse({ success: pasteResult.pasted > 0, ...pasteResult });
           break;
+        }
       }
     });
   }
@@ -952,12 +987,22 @@
     return { syncConfig: { ...localExtra, ...syncConfig }, effective };
   }
 
+  function makeCancelledResult() {
+    return { success: false, cancelled: true, error: 'Analyse annulée' };
+  }
+
   async function handleAnalyzeQuiz(settings, forceFallback = false, isAuto = false) {
     if (!settings || typeof settings !== 'object') {
       throw new Error('Argument settings invalide dans handleAnalyzeQuiz.');
     }
+    if (isAuto && !isExtensionEnabled()) {
+      return makeCancelledResult();
+    }
 
+    const startClearGen = _clearGeneration;
+    const isCancelled = () => startClearGen !== _clearGeneration;
     const { syncConfig, effective: effectiveSettings } = await loadEffectiveSettings(settings);
+    if (isCancelled()) return makeCancelledResult();
     const safeSummary = buildSafeSettingsSummary(effectiveSettings);
     console.log('⚙️ Settings:', safeSummary, 'Force Fallback:', Boolean(forceFallback));
 
@@ -966,6 +1011,7 @@
     } else if (_passiveBridgeEnabled) {
       await syncPassiveNetworkInterceptor(false).catch(() => {});
     }
+    if (isCancelled()) return makeCancelledResult();
 
     if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
       Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Lecture du quiz…', percent: 10 })).catch(() => {});
@@ -981,14 +1027,17 @@
     const MAX_ATTEMPTS = 2;
 
     while (attempts < MAX_ATTEMPTS) {
+      if (isCancelled()) return makeCancelledResult();
       attempts++;
       quizData = await rootWin.SafeExm.DOMExtractor.extractQuizData();
+      if (isCancelled()) return makeCancelledResult();
       console.log(`📝 [Essai ${attempts}] Questions extraites: ${quizData && Array.isArray(quizData.questions) ? quizData.questions.length : 0}`);
 
       if (quizData && Array.isArray(quizData.questions) && quizData.questions.length > 0) {
         break;
       }
 
+      if (isCancelled()) return makeCancelledResult();
       console.log('ℹ️ Aucune question trouvée. Tentative de découverte automatique du schéma...');
       if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
         Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Repérage de la page…', percent: 12 })).catch(() => {});
@@ -996,20 +1045,25 @@
       if (forceFallback || (typeof SchemaDetector !== 'undefined' && SchemaDetector && SchemaDetector.hasInteractiveContent())) {
         try {
           const newSchema = await SchemaDetector.discoverSchema(true);
+          if (isCancelled()) return makeCancelledResult();
           if (newSchema) {
             if (typeof SchemaCache !== 'undefined' && SchemaCache) {
               const hostname = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
               await SchemaCache.saveSchema(hostname, newSchema);
+              if (isCancelled()) return makeCancelledResult();
             }
             console.log('🔄 Schéma découvert ! La boucle va relancer l\'extraction...');
             continue;
           }
         } catch (e) {
+          if (isCancelled()) return makeCancelledResult();
           console.error('❌ Échec de la découverte automatique du schéma:', e);
         }
       }
       break;
     }
+
+    if (isCancelled()) return makeCancelledResult();
 
     if (quizData && Array.isArray(quizData.questions) && quizData.questions.length > 0 && isAuto) {
       const newQuestions = filterAndReindexDeltaQuestions(quizData.questions, _analyzedQuestionTexts);
@@ -1041,6 +1095,8 @@
     }
 
     try {
+      if (isCancelled()) return makeCancelledResult();
+
       // ─── Construire la tâche pour le Background Agent ───
       const task = {
         questions: quizData.questions,
@@ -1069,11 +1125,25 @@
       // ─── Appel asynchrone au Background Agent via port persistant ───
       const agentResult = await new Promise((resolve, reject) => {
         const port = chrome.runtime.connect({ name: 'solveQuiz' });
-        let resolved = false;
+        let settled = false;
+        const cancelWait = () => {
+          if (settled) return;
+          settled = true;
+          _inFlightPortCancels.delete(cancelWait);
+          if (port && typeof port.disconnect === 'function') {
+            try { port.disconnect(); } catch { /* ignore */ }
+          }
+          resolve({ __cancelled: true });
+        };
+        _inFlightPortCancels.add(cancelWait);
 
         port.onMessage.addListener((response) => {
-          resolved = true;
-          port.disconnect();
+          if (settled) return;
+          settled = true;
+          _inFlightPortCancels.delete(cancelWait);
+          if (port && typeof port.disconnect === 'function') {
+            try { port.disconnect(); } catch { /* ignore */ }
+          }
           if (!response) {
             return reject(new Error('Pas de réponse du BackgroundAgent'));
           }
@@ -1081,14 +1151,31 @@
         });
 
         port.onDisconnect.addListener(() => {
-          if (!resolved) {
+          if (!settled) {
+            settled = true;
+            _inFlightPortCancels.delete(cancelWait);
             const err = chrome.runtime.lastError;
             reject(new Error(err ? err.message : 'Port déconnecté avant réponse'));
           }
         });
 
-        port.postMessage({ action: 'solveQuiz', task });
+        try {
+          port.postMessage({ action: 'solveQuiz', task });
+        } catch (postErr) {
+          if (!settled) {
+            settled = true;
+            _inFlightPortCancels.delete(cancelWait);
+            if (port && typeof port.disconnect === 'function') {
+              try { port.disconnect(); } catch { /* ignore */ }
+            }
+            reject(postErr);
+          }
+        }
       });
+
+      if ((agentResult && agentResult.__cancelled) || isCancelled()) {
+        return makeCancelledResult();
+      }
 
       if (!agentResult.success) {
         console.error('❌ BackgroundAgent a échoué:', agentResult.error);
@@ -1112,11 +1199,15 @@
       }
 
       // Call HighlightManager API (preserve existing connected highlights in Auto Mode Delta)
-      await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
+      const highlightStatus = await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
         stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion,
         showConfidenceBadge: effectiveSettings.showConfidenceBadge !== false,
         append: Boolean(isAuto)
       });
+
+      if (highlightStatus === 'CANCELLED' || isCancelled()) {
+        return makeCancelledResult();
+      }
 
       // Stocker les questions analysées pour le mode Auto (Delta)
       for (const q of quizData.questions) {
@@ -1169,6 +1260,7 @@
         }
       };
     } catch (error) {
+      if (isCancelled()) return makeCancelledResult();
       console.error('❌ Erreur globale d\'analyse:', error);
       return { success: false, error: error.message };
     }
@@ -1220,9 +1312,10 @@
   }
 
   function handlePasteAnswer() {
-    if (pendingTextAnswers.length === 0) return;
+    if (pendingTextAnswers.length === 0) return { pasted: 0 };
 
     console.log('📋 Injection du texte de réponse par clic droit / raccourci...');
+    let pasted = 0;
     pendingTextAnswers.forEach(item => {
       const activeEl = item.element || (typeof document !== 'undefined' && document ? document.activeElement : null);
       if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
@@ -1232,8 +1325,10 @@
           activeEl.innerText = item.answer;
         }
         dispatchInputEvents(activeEl);
+        pasted++;
       }
     });
+    return { pasted };
   }
 
   // Export Content API

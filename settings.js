@@ -1,4 +1,5 @@
 // Settings Page Script
+/* global CourseMedia */
 
 // Éléments DOM
 const elements = {
@@ -20,6 +21,7 @@ const elements = {
   imageQualityDisplay: document.getElementById('imageQualityDisplay'),
 
   priorityList: document.getElementById('priorityList'),
+  priorityAnnouncer: document.getElementById('priorityAnnouncer'),
   modelOverrides: document.getElementById('modelOverrides'),
 
   contextText: document.getElementById('contextText'),
@@ -40,6 +42,10 @@ const elements = {
 
   saveBtn: document.getElementById('saveBtn'),
   resetBtn: document.getElementById('resetBtn'),
+  resetConfirmDialog: document.getElementById('resetConfirmDialog'),
+  resetDialogTitle: document.getElementById('resetDialogTitle'),
+  resetDialogDesc: document.getElementById('resetDialogDesc'),
+  resetConfirmBtn: document.getElementById('resetConfirmBtn'),
   saveStatus: document.getElementById('saveStatus'),
 
   // Nouveaux éléments
@@ -161,12 +167,34 @@ const discretionStringToInt = {
   'glow': 4
 };
 
+function getThemeManager() {
+  return (typeof window !== 'undefined' && window.SafeExmTheme) ? window.SafeExmTheme : null;
+}
+
+function syncThemeToggleButton(stateInfo) {
+  const tm = getThemeManager();
+  if (tm && typeof tm.syncThemeButtonLabel === 'function' && elements.themeToggleBtn) {
+    tm.syncThemeButtonLabel(elements.themeToggleBtn, stateInfo);
+  }
+}
+
 function applyTheme(theme) {
+  const tm = getThemeManager();
+  if (tm && typeof tm.applyThemeOverride === 'function') {
+    const nextState = tm.applyThemeOverride(theme === 'dark' || theme === 'light' ? theme : null);
+    syncThemeToggleButton(nextState);
+    return;
+  }
   if (!document.documentElement) return;
   document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
 }
 
 async function initTheme() {
+  const tm = getThemeManager();
+  if (tm && typeof tm.initThemeFromStorage === 'function') {
+    await tm.initThemeFromStorage((nextState) => syncThemeToggleButton(nextState));
+    return;
+  }
   let theme = 'light';
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     try {
@@ -468,9 +496,14 @@ function renderProviderCards() {
     toggleVisBtn.className = 'toggle-visibility';
     toggleVisBtn.dataset.target = keyField;
     toggleVisBtn.textContent = 'Voir';
+    toggleVisBtn.setAttribute('aria-pressed', 'false');
+    toggleVisBtn.setAttribute('aria-label', `Afficher la clé ${provider.name || id}`);
     toggleVisBtn.addEventListener('click', () => {
-      keyInput.type = keyInput.type === 'password' ? 'text' : 'password';
-      toggleVisBtn.textContent = keyInput.type === 'password' ? 'Voir' : 'Cacher';
+      const showPlaintext = keyInput.type === 'password';
+      keyInput.type = showPlaintext ? 'text' : 'password';
+      toggleVisBtn.textContent = showPlaintext ? 'Cacher' : 'Voir';
+      toggleVisBtn.setAttribute('aria-pressed', showPlaintext ? 'true' : 'false');
+      toggleVisBtn.setAttribute('aria-label', `${showPlaintext ? 'Masquer' : 'Afficher'} la clé ${provider.name || id}`);
     });
 
     const testBtn = document.createElement('button');
@@ -729,24 +762,25 @@ async function loadSettings() {
 
   // Pré-charger les listes de modèles déjà en cache
   if (window.ModelRegistry && typeof window.ModelRegistry.getCachedModels === 'function') {
-    Promise.allSettled(
-      Object.keys(providersMap).map(async (id) => {
-        const cached = await window.ModelRegistry.getCachedModels(id);
-        if (Array.isArray(cached) && cached.length > 0) {
-          syncedModelsByProvider[id] = cached;
-          const infoEl = document.getElementById(`${id}ModelsInfo`);
-          if (infoEl) {
-            const pDef = providersMap[id];
-            const defLbl = (pDef && pDef.genericProtocolConnector === true)
-              ? (cached[0]?.id || 'auto')
-              : (pDef?.defaultTextModel || 'auto');
-            infoEl.textContent = `${cached.length} modèle(s) en cache (défaut : ${defLbl})`;
+    try {
+      await Promise.allSettled(
+        Object.keys(providersMap).map(async (id) => {
+          const cached = await window.ModelRegistry.getCachedModels(id);
+          if (Array.isArray(cached) && cached.length > 0) {
+            syncedModelsByProvider[id] = cached;
+            const infoEl = document.getElementById(`${id}ModelsInfo`);
+            if (infoEl) {
+              const pDef = providersMap[id];
+              const defLbl = (pDef && pDef.genericProtocolConnector === true)
+                ? (cached[0]?.id || 'auto')
+                : (pDef?.defaultTextModel || 'auto');
+              infoEl.textContent = `${cached.length} modèle(s) en cache (défaut : ${defLbl})`;
+            }
           }
-        }
-      })
-    ).then(() => {
+        })
+      );
       renderModelOverrides();
-    }).catch(() => {});
+    } catch { /* ignore cache pre-load errors */ }
   }
 
   // Context & UI Settings
@@ -848,11 +882,23 @@ function updateBehaviorDependenciesUI() {
   }
 }
 
-// Rendre la liste de priorité (sans innerHTML interpolé)
-function renderPriorityList() {
-  if (!elements.priorityList) return;
-  elements.priorityList.textContent = '';
+let _priorityAnnounceTimer = null;
 
+function announcePriorityChange(message) {
+  const announcer = elements.priorityAnnouncer || document.getElementById('priorityAnnouncer');
+  if (!announcer) return;
+  if (_priorityAnnounceTimer !== null) {
+    clearTimeout(_priorityAnnounceTimer);
+    _priorityAnnounceTimer = null;
+  }
+  announcer.textContent = '';
+  _priorityAnnounceTimer = setTimeout(() => {
+    announcer.textContent = message;
+    _priorityAnnounceTimer = null;
+  }, 150);
+}
+
+function getVisiblePriorityKeys() {
   const providersMap = getProvidersMap();
   const { snapshot } = collectAllProviderFormState();
   syncProviderOrder(snapshot);
@@ -864,14 +910,80 @@ function renderPriorityList() {
   let keysToDisplay = fullOrder;
   if (!showAll) {
     const configuredKeys = fullOrder.filter(id => isProviderConfiguredInUI(id, providersMap[id], snapshot));
-    keysToDisplay = configuredKeys.length > 0
-      ? configuredKeys
-      : getDefaultPriority().filter(id => Object.prototype.hasOwnProperty.call(providersMap, id));
+    if (configuredKeys.length > 0) {
+      keysToDisplay = configuredKeys;
+    } else {
+      const defaultSet = new Set(getDefaultPriority());
+      keysToDisplay = fullOrder.filter(id => defaultSet.has(id));
+    }
+  }
+  return { providersMap, fullOrder, keysToDisplay };
+}
+
+function movePriorityProvider(id, delta, options = {}) {
+  if (!id || (delta !== -1 && delta !== 1)) return false;
+  const { providersMap, fullOrder, keysToDisplay } = getVisiblePriorityKeys();
+  const visIdx = keysToDisplay.indexOf(id);
+  const newVisIdx = visIdx + delta;
+  if (visIdx === -1 || newVisIdx < 0 || newVisIdx >= keysToDisplay.length) {
+    return false;
   }
 
-  keysToDisplay.forEach((id) => {
+  const neighborId = keysToDisplay[newVisIdx];
+  const fromFullIdx = fullOrder.indexOf(id);
+  if (fromFullIdx === -1) return false;
+  fullOrder.splice(fromFullIdx, 1);
+
+  const neighborFullIdx = fullOrder.indexOf(neighborId);
+  if (neighborFullIdx === -1) return false;
+  const insertAt = delta < 0 ? neighborFullIdx : neighborFullIdx + 1;
+  fullOrder.splice(insertAt, 0, id);
+
+  providerOrder = fullOrder;
+  renderPriorityList();
+
+  if (elements.priorityList && typeof elements.priorityList.querySelectorAll === 'function') {
+    const items = Array.from(elements.priorityList.querySelectorAll('.priority-item'));
+    const movedItem = items.find((el) => el.dataset && el.dataset.id === id);
+    if (movedItem) {
+      if (typeof movedItem.scrollIntoView === 'function') {
+        try {
+          movedItem.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        } catch { /* ignore in minimal mocks */ }
+      }
+      if (typeof movedItem.querySelectorAll === 'function') {
+        const btns = Array.from(movedItem.querySelectorAll('.priority-move-btn'));
+        const preferredDir = options.focusDir || (delta < 0 ? 'up' : 'down');
+        const preferredBtn = btns.find((b) => b.dataset && b.dataset.dir === preferredDir);
+        const fallbackBtn = btns.find((b) => !b.disabled);
+        const focusTarget = (preferredBtn && !preferredBtn.disabled) ? preferredBtn : fallbackBtn;
+        if (focusTarget && typeof focusTarget.focus === 'function') {
+          try {
+            focusTarget.focus({ preventScroll: true });
+          } catch {
+            focusTarget.focus();
+          }
+        }
+      }
+    }
+  }
+
+  const providerName = providersMap[id]?.name || id;
+  announcePriorityChange(`${providerName} déplacé en position ${newVisIdx + 1} sur ${keysToDisplay.length}.`);
+  return true;
+}
+
+// Rendre la liste de priorité (sans innerHTML interpolé)
+function renderPriorityList() {
+  if (!elements.priorityList) return;
+  elements.priorityList.textContent = '';
+
+  const { providersMap, keysToDisplay } = getVisiblePriorityKeys();
+
+  keysToDisplay.forEach((id, idx) => {
     const provider = providersMap[id];
     if (!provider) return;
+    const displayName = provider.name || id;
 
     const item = document.createElement('div');
     item.className = 'priority-item';
@@ -880,16 +992,60 @@ function renderPriorityList() {
 
     const handle = document.createElement('span');
     handle.className = 'handle';
+    handle.setAttribute('aria-hidden', 'true');
     handle.textContent = '☰';
 
     const info = document.createElement('div');
     info.className = 'provider-info';
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = provider.name || id;
+    nameSpan.textContent = displayName;
     info.appendChild(nameSpan);
+
+    const actions = document.createElement('div');
+    actions.className = 'priority-actions';
+
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'priority-move-btn';
+    upBtn.dataset.dir = 'up';
+    upBtn.dataset.providerId = id;
+    upBtn.textContent = '↑';
+    upBtn.disabled = idx === 0;
+    upBtn.setAttribute('aria-label', `Monter ${displayName} (position ${idx + 1} sur ${keysToDisplay.length})`);
+    upBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      movePriorityProvider(id, -1, { focusDir: 'up' });
+    });
+
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'priority-move-btn';
+    downBtn.dataset.dir = 'down';
+    downBtn.dataset.providerId = id;
+    downBtn.textContent = '↓';
+    downBtn.disabled = idx === keysToDisplay.length - 1;
+    downBtn.setAttribute('aria-label', `Descendre ${displayName} (position ${idx + 1} sur ${keysToDisplay.length})`);
+    downBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      movePriorityProvider(id, 1, { focusDir: 'down' });
+    });
+
+    actions.appendChild(upBtn);
+    actions.appendChild(downBtn);
 
     item.appendChild(handle);
     item.appendChild(info);
+    item.appendChild(actions);
+
+    item.addEventListener('keydown', (e) => {
+      if (e.altKey && e.key === 'ArrowUp') {
+        e.preventDefault();
+        movePriorityProvider(id, -1, { focusDir: 'up' });
+      } else if (e.altKey && e.key === 'ArrowDown') {
+        e.preventDefault();
+        movePriorityProvider(id, 1, { focusDir: 'down' });
+      }
+    });
 
     item.addEventListener('dragstart', handleDragStart);
     item.addEventListener('dragover', handleDragOver);
@@ -989,11 +1145,14 @@ function renderModelOverrides() {
       const group = document.createElement('div');
       group.className = 'input-group';
 
+      const inputId = `model-${id}-${typeKey}`;
       const lbl = document.createElement('label');
+      lbl.setAttribute('for', inputId);
       lbl.textContent = labelText;
 
       const inp = document.createElement('input');
       inp.type = 'text';
+      inp.id = inputId;
       inp.placeholder = `Par défaut : ${defaultModelVal || 'auto'}`;
       inp.value = savedVal || '';
       inp.dataset.provider = id;
@@ -1103,7 +1262,7 @@ function updateApiKeyBadges() {
 
 // Gérer la mise à jour visuelle du curseur de discrétion
 function updateDiscretionUI() {
-  const value = parseInt(elements.discretionSlider.value);
+  const value = parseInt(elements.discretionSlider.value, 10);
   const color = elements.highlightColor.value;
   const previewEl = elements.highlightPreviewElement;
   const descEl = elements.discretionDescription;
@@ -1111,15 +1270,16 @@ function updateDiscretionUI() {
 
   // Mettre à jour l'état actif des étiquettes textuelles
   document.querySelectorAll('.step-label').forEach(label => {
-    const val = parseInt(label.dataset.value);
-    if (val === value) {
-      label.classList.add('active');
-    } else {
-      label.classList.remove('active');
-    }
+    const val = parseInt(label.dataset.value, 10);
+    const isActive = val === value;
+    label.classList.toggle('active', isActive);
+    label.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
 
   const level = discretionDescriptions[value];
+  if (elements.discretionSlider && typeof elements.discretionSlider.setAttribute === 'function') {
+    elements.discretionSlider.setAttribute('aria-valuetext', level ? level.title : String(value));
+  }
   if (level && previewEl && descEl) {
     descEl.textContent = '';
     const strongEl = document.createElement('strong');
@@ -1141,30 +1301,110 @@ function updateDiscretionUI() {
   }
 }
 
+function getTabButtons() {
+  return Array.from(document.querySelectorAll('.tab-btn'));
+}
+
+function getPanelIdForTab(btn) {
+  if (!btn) return null;
+  return (btn.dataset && btn.dataset.panel) || btn.getAttribute('aria-controls') || null;
+}
+
+function activateTab(btn, { focus = false } = {}) {
+  if (!btn) return null;
+  const allTabs = getTabButtons();
+  const targetId = getPanelIdForTab(btn);
+  let targetPanel = null;
+
+  allTabs.forEach((b) => {
+    const isSelected = b === btn;
+    b.classList.toggle('active', isSelected);
+    b.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+    b.setAttribute('tabindex', isSelected ? '0' : '-1');
+    const panelId = getPanelIdForTab(b);
+    const panel = panelId ? document.getElementById(panelId) : null;
+    if (panel) {
+      panel.classList.toggle('active', isSelected);
+      if (isSelected) {
+        panel.hidden = false;
+        if (typeof panel.removeAttribute === 'function') {
+          panel.removeAttribute('hidden');
+        }
+        targetPanel = panel;
+      } else {
+        panel.setAttribute('hidden', 'until-found');
+      }
+    }
+  });
+
+  if (typeof btn.scrollIntoView === 'function') {
+    try {
+      btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    } catch { /* ignore in minimal mocks */ }
+  }
+  if (focus && typeof btn.focus === 'function') {
+    btn.focus();
+  }
+  return targetPanel || (targetId ? document.getElementById(targetId) : null);
+}
+
 // Configurer les écouteurs
 function setupEventListeners() {
-  // Navigation par Onglets
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => {
-        b.classList.remove('active');
-        b.setAttribute('aria-selected', 'false');
-      });
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  // Navigation par Onglets (souris + clavier + beforematch Ctrl+F)
+  const tabButtons = getTabButtons();
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => activateTab(btn));
+  });
 
-      btn.classList.add('active');
-      btn.setAttribute('aria-selected', 'true');
-      const targetId = btn.getAttribute('aria-controls');
-      const contentEl = document.getElementById(targetId);
-      if (contentEl) {
-        contentEl.classList.add('active');
+  const tabList = Array.from(document.querySelectorAll('.settings-tabs'))[0] || null;
+  if (tabList && typeof tabList.addEventListener === 'function') {
+    tabList.addEventListener('keydown', (e) => {
+      const tabs = getTabButtons();
+      if (tabs.length === 0) return;
+      const activeEl = document.activeElement;
+      const currentIdx = tabs.indexOf(activeEl);
+      if (currentIdx === -1) return;
+
+      const isRtl = document.documentElement && document.documentElement.dir === 'rtl';
+      const nextKey = isRtl ? 'ArrowLeft' : 'ArrowRight';
+      const prevKey = isRtl ? 'ArrowRight' : 'ArrowLeft';
+
+      let nextIdx = -1;
+      if (e.key === nextKey) {
+        nextIdx = (currentIdx + 1) % tabs.length;
+      } else if (e.key === prevKey) {
+        nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+      } else if (e.key === 'Home') {
+        nextIdx = 0;
+      } else if (e.key === 'End') {
+        nextIdx = tabs.length - 1;
+      }
+
+      if (nextIdx !== -1) {
+        e.preventDefault();
+        activateTab(tabs[nextIdx], { focus: true });
+      }
+    });
+  }
+
+  document.querySelectorAll('.tab-content').forEach((panel) => {
+    if (typeof panel.addEventListener !== 'function') return;
+    panel.addEventListener('beforematch', () => {
+      const matchingTab = getTabButtons().find((b) => getPanelIdForTab(b) === panel.id);
+      if (matchingTab) {
+        activateTab(matchingTab);
       }
     });
   });
 
-  // Bascule thème Papier / Ardoise
+  // Bascule thème Papier / Ardoise (avec retour au thème système)
   if (elements.themeToggleBtn) {
     elements.themeToggleBtn.addEventListener('click', async () => {
+      const tm = getThemeManager();
+      if (tm && typeof tm.toggleTheme === 'function') {
+        await tm.toggleTheme((nextState) => syncThemeToggleButton(nextState));
+        return;
+      }
       const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
       const next = current === 'dark' ? 'light' : 'dark';
       applyTheme(next);
@@ -1180,8 +1420,13 @@ function setupEventListeners() {
     btn.addEventListener('click', () => {
       const input = document.getElementById(btn.dataset.target);
       if (!input) return;
-      input.type = input.type === 'password' ? 'text' : 'password';
-      btn.textContent = input.type === 'password' ? 'Voir' : 'Cacher';
+      const showPlaintext = input.type === 'password';
+      input.type = showPlaintext ? 'text' : 'password';
+      btn.textContent = showPlaintext ? 'Cacher' : 'Voir';
+      btn.setAttribute('aria-pressed', showPlaintext ? 'true' : 'false');
+      if (btn.dataset.target === 'serpApiKey') {
+        btn.setAttribute('aria-label', `${showPlaintext ? 'Masquer' : 'Afficher'} la clé SerpAPI`);
+      }
     });
   });
 
@@ -1486,27 +1731,26 @@ async function testProvider(id, btn) {
       showStatus(`Connexion ${provider.name || id} OK.`, 'success');
       btn.style.borderColor = 'var(--success-color)';
 
-      // DET-01 : Lancement de la synchronisation des modèles en arrière-plan
+      // DET-01 : Lancement de la synchronisation des modèles
       if (window.ModelRegistry && typeof window.ModelRegistry.syncProviderModels === 'function') {
         console.log(`Synchronisation des modèles pour ${providerKey}...`);
-        window.ModelRegistry.syncProviderModels(providerKey, apiKey, cfg)
-          .then((models) => {
-            if (Array.isArray(models) && models.length > 0) {
-              syncedModelsByProvider[providerKey] = models;
-              const infoEl = document.getElementById(`${providerKey}ModelsInfo`);
-              if (infoEl) {
-                const defaultLabel = provider.genericProtocolConnector === true
-                  ? (models[0]?.id || 'auto')
-                  : (provider.defaultTextModel || models[0]?.id || 'auto');
-                infoEl.textContent = `${models.length} modèle${models.length > 1 ? 's' : ''} synchronisé${models.length > 1 ? 's' : ''} · défaut : ${defaultLabel}`;
-              }
-              renderModelOverrides();
+        try {
+          const models = await window.ModelRegistry.syncProviderModels(providerKey, apiKey, cfg);
+          if (Array.isArray(models) && models.length > 0) {
+            syncedModelsByProvider[providerKey] = models;
+            const infoEl = document.getElementById(`${providerKey}ModelsInfo`);
+            if (infoEl) {
+              const defaultLabel = provider.genericProtocolConnector === true
+                ? (models[0]?.id || 'auto')
+                : (provider.defaultTextModel || models[0]?.id || 'auto');
+              infoEl.textContent = `${models.length} modèle${models.length > 1 ? 's' : ''} synchronisé${models.length > 1 ? 's' : ''} · défaut : ${defaultLabel}`;
             }
-            console.log(`Synchronisation des modèles terminée pour ${providerKey}`);
-          })
-          .catch(syncErr => {
-            console.warn(`Échec de la synchronisation des modèles pour ${providerKey}:`, syncErr);
-          });
+            renderModelOverrides();
+          }
+          console.log(`Synchronisation des modèles terminée pour ${providerKey}`);
+        } catch (syncErr) {
+          console.warn(`Échec de la synchronisation des modèles pour ${providerKey}:`, syncErr);
+        }
       }
     } else {
       throw new Error('Réponse vide');
@@ -2095,8 +2339,61 @@ async function saveSettings() {
   }
 }
 
+function clearElementSafe(container, ...nodes) {
+  if (!container) return;
+  if (typeof container.replaceChildren === 'function') {
+    container.replaceChildren(...nodes);
+    return;
+  }
+  container.textContent = '';
+  for (const node of nodes) {
+    if (node && typeof container.appendChild === 'function') {
+      container.appendChild(node);
+    }
+  }
+}
+
+function openConfirmDialog({ title, description, confirmLabel }) {
+  const dialog = elements.resetConfirmDialog || document.getElementById('resetConfirmDialog');
+  if (!dialog || typeof dialog.showModal !== 'function') {
+    return Promise.resolve(typeof confirm === 'function' ? confirm(description || title) : false);
+  }
+  if (dialog.open) {
+    return Promise.resolve(false);
+  }
+
+  const titleEl = elements.resetDialogTitle || document.getElementById('resetDialogTitle');
+  const descEl = elements.resetDialogDesc || document.getElementById('resetDialogDesc');
+  const confirmBtn = elements.resetConfirmBtn || document.getElementById('resetConfirmBtn');
+
+  if (titleEl && title) titleEl.textContent = title;
+  if (descEl && description) descEl.textContent = description;
+  if (confirmBtn && confirmLabel) confirmBtn.textContent = confirmLabel;
+
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      resolve(dialog.returnValue === 'confirm');
+    };
+    dialog.addEventListener('close', handleClose, { once: true });
+    dialog.returnValue = 'cancel';
+    try {
+      dialog.showModal();
+    } catch {
+      if (typeof dialog.removeEventListener === 'function') {
+        dialog.removeEventListener('close', handleClose);
+      }
+      resolve(false);
+    }
+  });
+}
+
 async function resetSettings() {
-  if (confirm('Réinitialiser tous les paramètres ?')) {
+  const confirmed = await openConfirmDialog({
+    title: 'Réinitialiser les paramètres',
+    description: 'Tous vos réglages synchronisés et comportements locaux seront remis par défaut. Vos clés API enregistrées seront conservées.',
+    confirmLabel: 'Réinitialiser'
+  });
+  if (confirmed) {
     await chrome.storage.sync.clear();
     await chrome.storage.local.remove(Object.keys(DEFAULT_BEHAVIOR_SETTINGS));
     location.reload();
@@ -2116,11 +2413,19 @@ function showStatus(message, type) {
   }, 4000);
 }
 
+function setSchemaListMessage(text) {
+  if (!elements.schemaList) return;
+  const p = document.createElement('p');
+  p.className = 'help-text';
+  p.textContent = text;
+  clearElementSafe(elements.schemaList, p);
+}
+
 // Gestion du Cache des Schémas
 async function loadSchemas() {
   if (!elements.schemaList) return;
   if (typeof SchemaCache === 'undefined') {
-    elements.schemaList.innerHTML = '<p class="help-text">SchemaCache non disponible</p>';
+    setSchemaListMessage('SchemaCache non disponible');
     return;
   }
 
@@ -2128,28 +2433,22 @@ async function loadSchemas() {
     const schemas = await SchemaCache.listCachedSchemas();
     renderSchemaList(schemas);
   } catch (e) {
-    elements.schemaList.innerHTML = '<p class="help-text">Erreur de chargement</p>';
+    setSchemaListMessage('Erreur de chargement');
   }
 }
 
 function renderSchemaList(schemas) {
   if (!elements.schemaList) return;
-  elements.schemaList.innerHTML = '';
+  clearElementSafe(elements.schemaList);
 
   if (schemas.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'help-text';
-    empty.textContent = 'Aucun site en cache pour l\'instant.';
-    elements.schemaList.appendChild(empty);
+    setSchemaListMessage('Aucun site en cache pour l\'instant.');
     return;
   }
 
   schemas.forEach(schema => {
     const item = document.createElement('div');
     item.className = 'file-item';
-    item.style.display = 'flex';
-    item.style.justifyContent = 'space-between';
-    item.style.alignItems = 'center';
 
     const info = document.createElement('div');
     const confidence = schema.confidence ? ` (${Math.round(schema.confidence * 100)}%)` : '';
@@ -2163,15 +2462,15 @@ function renderSchemaList(schemas) {
     info.appendChild(hostSpan);
 
     const detailSpan = document.createElement('span');
-    detailSpan.style.fontSize = '0.8em';
-    detailSpan.style.opacity = '0.7';
-    detailSpan.style.display = 'block';
+    detailSpan.className = 'schema-detail';
     detailSpan.textContent = `${schema.platform}${confidence}${date ? ' — ' + date : ''}`;
     info.appendChild(detailSpan);
 
     const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
     deleteBtn.className = 'remove-file';
     deleteBtn.textContent = '✕';
+    deleteBtn.setAttribute('aria-label', `Supprimer ${schema.hostname}`);
     deleteBtn.dataset.hostname = schema.hostname;
     deleteBtn.addEventListener('click', () => handleDeleteSchema(schema.hostname));
 
@@ -2190,8 +2489,25 @@ async function handleDeleteSchema(hostname) {
 
 async function handleClearAllSchemas() {
   if (typeof SchemaCache === 'undefined') return;
-  if (!confirm('Supprimer tous les sites en cache ?')) return;
+  const confirmed = await openConfirmDialog({
+    title: 'Effacer les sites mémorisés',
+    description: 'Supprimer tous les schémas de sites conservés en cache ?',
+    confirmLabel: 'Tout effacer'
+  });
+  if (!confirmed) return;
   const count = await SchemaCache.clearAllSchemas();
   showStatus(`${count} site(s) supprimé(s) du cache.`, 'success');
   loadSchemas();
+}
+
+if (typeof window !== 'undefined') {
+  window.SafeExmSettings = {
+    activateTab,
+    movePriorityProvider,
+    renderPriorityList,
+    resetSettings,
+    handleClearAllSchemas,
+    loadSchemas,
+    renderSchemaList
+  };
 }

@@ -4,7 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>Safe Exm</title>
+  <script src="theme-init.js"></script>
   <link rel="stylesheet" href="popup.css">
 </head>
 
@@ -16,7 +18,7 @@
         <span class="logo-title">Safe Exm</span>
       </div>
       <div class="header-right">
-        <div class="status-badge" id="statusBadge">
+        <div class="status-badge" id="statusBadge" role="status" aria-live="polite" aria-atomic="true">
           <span class="status-dot" id="statusDot"></span>
           <span id="connectionStatus">Vérification…</span>
         </div>
@@ -46,20 +48,20 @@
         </button>
       </div>
 
-      <div class="progress-section" id="progressSection" style="display: none;">
+      <div class="progress-section" id="progressSection" hidden>
         <div class="progress-info">
           <span class="progress-text" id="progressText">Analyse en cours…</span>
           <span class="progress-percentage" id="progressPercentage">0%</span>
         </div>
-        <div class="progress-bar-container">
-          <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
-        </div>
+        <progress id="progressBarFill" class="progress-bar" value="0" max="100" aria-labelledby="progressText"></progress>
       </div>
 
-      <div class="schema-status unknown" id="schemaStatus" style="display: none;">
+      <span id="popupAnnouncer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></span>
+
+      <div class="schema-status unknown" id="schemaStatus" hidden>
         <span class="schema-icon" id="schemaIcon" aria-hidden="true"></span>
         <span class="schema-text" id="schemaText">Lecture de la page…</span>
-        <button type="button" class="btn schema-btn" id="schemaRediscoverBtn" title="Relancer la détection">↺</button>
+        <button type="button" class="btn schema-btn" id="schemaRediscoverBtn" title="Relancer la détection" aria-label="Relancer la détection du schéma">↺</button>
       </div>
 
       <details class="shortcuts-accordion">
@@ -78,13 +80,15 @@
       <details class="stats-accordion" id="providerStatsSection">
         <summary class="stats-summary">
           <span class="accordion-label">Statistiques</span>
-          <span class="stats-summary-actions">
-            <button type="button" id="resetStatsBtn" class="stats-reset-btn" title="Réinitialiser les statistiques">RàZ</button>
-            <span class="accordion-chevron" aria-hidden="true">+</span>
-          </span>
+          <span class="accordion-chevron" aria-hidden="true">+</span>
         </summary>
-        <div class="stats-content" id="providerStatsList">
-          <p class="stats-empty" id="providerStatsEmpty">Aucune requête pour l'instant</p>
+        <div class="stats-content-wrap">
+          <div class="stats-toolbar">
+            <button type="button" id="resetStatsBtn" class="stats-reset-btn" title="Réinitialiser les statistiques" aria-label="Réinitialiser les statistiques">RàZ</button>
+          </div>
+          <div class="stats-content" id="providerStatsList">
+            <p class="stats-empty" id="providerStatsEmpty">Aucune requête pour l'instant</p>
+          </div>
         </div>
       </details>
     </main>

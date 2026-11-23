@@ -275,3 +275,28 @@
     - Passe 1 (`2deb663c`) : 3 constats (`gitleaks` sur faux token de test `tests/course-media.test.js:260`, écrasement `answers[ans.questionIndex]` dans `_validateAndRetry` `background-agent.js:2771`, comptage brut de `q.images` SVG dans `background-agent.js`) + observation `Buffer` ESLint → tous corrigés avec tests de non-régression.
     - Passe 2 (`e1063e70`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
 -[Antigravity, Gemini 4 Neon, XHigh]
+
+### Run: Mise en conformité `modern-web-guidance` & Manifest V3 (`theme-init.js`, `popup.*`, `settings.*`, `background.js`, `content.js`, `highlight-manager.js`, `manifest.json`)
+- **Date**: 2026-11-23
+- **Target**: `theme-init.js`, `popup.html`, `popup.css`, `popup.js`, `settings.html`, `settings.css`, `settings.js`, `background.js`, `content.js`, `highlight-manager.js`, `manifest.json`, `ARCHITECTURE.md`, `tests/modern-web-guidance.test.js`
+- **Status**: PASS
+- **Output / Evidence**:
+  - **Syntaxe & ESLint (`eslint theme-init.js popup.js settings.js background.js content.js highlight-manager.js tests/modern-web-guidance.test.js`)** : `exit 0` (`0` erreur, `0` warning ; note : `eslint .` sur le dépôt complet signale 2 erreurs préexistantes hors périmètre dans `providers.js:1435,1437`).
+  - **Suite complète (`node --test --test-concurrency=1 tests/*.test.js`)** :
+    ```text
+    ℹ tests 149 | ℹ suites 0 | ℹ pass 149 | ℹ fail 0 | ℹ cancelled 0 | ℹ skipped 0 | ℹ todo 0 | ℹ duration_ms 15975.361921
+    ```
+    (`11` tests dans `tests/modern-web-guidance.test.js` : FOUC-free `theme-init.js` + concurrence `initThemeFromStorage` + bascule rapide + `matchMedia` sous override + sync `storage.onChanged`, onglets clavier + `beforematch`, `#priorityList` clavier même à 0 fournisseur configuré, `<dialog>` + garde `dialog.open`, `<progress>` + annonceur `popup.js`, `chrome.storage.session` pre-warm + notifications menus contextuels + `AbortSignal.timeout`, batching rAF/`scheduler.yield()` + onglet arrière-plan `document.hidden`/`visibilitychange` + `_applyGeneration` post-`NEEDS_HEAL`, annulation Panic/effacement/`ConfigCache.onChange` pré-LLM & port `solveQuiz` & timer debounce Auto Mode dans `content.js`, et invariants CSS/HTML/Manifest.)
+    *(Note : 1 erreur IPC transitoire du runner Node `v26.2.0` `Unable to deserialize cloned data due to invalid or unsupported version` observée une fois sur `tests/e2e-regressions.test.js` en cours d'itération ; `16/16 PASS` en isolé puis `149/149 PASS` sur la passe complète finale.)*
+  - **`pnpx modern-web-guidance@latest legacy-scan` (par fichier)** : `0 findings` sur `theme-init.js`, `popup.html`, `popup.css`, `popup.js`, `settings.html`, `settings.css`, `background.js`, `content.js`, `highlight-manager.js` ; `settings.js` ne remonte que les 2 `JSON.parse(JSON.stringify(...))` volontairement conservés (`eslint.config.js` sans `structuredClone`).
+  - **Vérification Chrome réel (Playwright `/bin/google-chrome`, `344×620` popup & `1024×900` settings)** :
+    - `CHROME_UI_VERIFY_PASS: popup_light, popup_dark, settings_light, settings_dark, settings_dialog verified cleanly (0 errors)` (avec 5 captures inspectées visuellement).
+    - Vérifiés : zéro débordement horizontal popup (`<= 344 px`), cascade `color-scheme` (`light dark` -> `dark` -> `light dark`), `<progress>` visible, `#resetStatsBtn` fonctionnel sans refermer `<details>`, panneaux `hidden="until-found"` à hauteur `0 px`, navigation clavier onglets + `beforematch`, réordonnancement `#priorityList` avec transfert de focus et `#priorityAnnouncer`, et modale `<dialog id="resetConfirmDialog">` fermée par `Escape` sans `window.confirm`.
+  - **Quality Gate (`bash .githooks/pre-commit` staged + `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit`)** : `7/7 ✅` (`exit 0`).
+  - **Audits forensiques `antibug-reviewer` (contexte frais sur `git diff --cached`)** :
+    - Passe 1 (`0170ab20`) : 5 constats (2 HIGH : `_applyGeneration` post-`NEEDS_HEAL` `highlight-manager.js`, `providerOrder` à 0 fournisseur `settings.js` ; 3 MEDIUM : `document.hidden` `rAF`, contrastes `--success-color`/`--warning-color`/hover danger, clipping `overflow` `:focus-visible`) → corrigés.
+    - Passe 2 (`3d064a5a`) : 2 constats (`content.js` `'CANCELLED'` ignoré par `handleAnalyzeQuiz()`, `/* global CourseMedia */` dans `settings.js`) → corrigés.
+    - Passe 3 (`7bad7275`) : 1 constat (`ConfigCache.onChange` `enabled=false` sans `_clearGeneration++` dans `content.js`) → corrigé via `setExtensionEnabled()`.
+    - Passe 4 (`abbc3750`) : 2 constats (annulation pré-LLM/port `solveQuiz` `content.js`, contraste SC 1.4.11 `<progress>` clair `popup.css`) → corrigés.
+    - Passe 5 (`f57b702a-5144-4f48-8643-efa834441d7e`) après correctif `_autoModeDebounceTimer` (`29a7a7ef`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+-[Antigravity, unknown, unknown]

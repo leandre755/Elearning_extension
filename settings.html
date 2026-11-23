@@ -4,7 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>Paramètres — Safe Exm</title>
+  <script src="theme-init.js"></script>
   <link rel="stylesheet" href="settings.css">
 </head>
 
@@ -27,16 +29,16 @@
     </header>
 
     <nav class="settings-tabs" role="tablist" aria-label="Sections des paramètres">
-      <button type="button" class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-essential" id="btn-essential">
+      <button type="button" class="tab-btn active" role="tab" aria-selected="true" tabindex="0" data-panel="tab-essential" id="btn-essential">
         <span class="tab-index">01</span> Général
       </button>
-      <button type="button" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-providers" id="btn-providers">
+      <button type="button" class="tab-btn" role="tab" aria-selected="false" tabindex="-1" data-panel="tab-providers" id="btn-providers">
         <span class="tab-index">02</span> Fournisseurs
       </button>
-      <button type="button" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-advanced" id="btn-advanced">
+      <button type="button" class="tab-btn" role="tab" aria-selected="false" tabindex="-1" data-panel="tab-advanced" id="btn-advanced">
         <span class="tab-index">03</span> Avancé
       </button>
-      <button type="button" class="tab-btn tab-expert" role="tab" aria-selected="false" aria-controls="tab-expert" id="btn-expert">
+      <button type="button" class="tab-btn tab-expert" role="tab" aria-selected="false" tabindex="-1" data-panel="tab-expert" id="btn-expert">
         <span class="tab-index">04</span> Expert
       </button>
     </nav>
@@ -52,13 +54,13 @@
           </div>
 
           <div class="discretion-slider-container">
-            <input type="range" id="discretionSlider" min="1" max="4" step="1" value="2">
+            <input type="range" id="discretionSlider" min="1" max="4" step="1" value="2" aria-label="Niveau de discrétion" aria-describedby="discretionDescription" aria-valuetext="Discret (recommandé)">
 
             <div class="discretion-steps">
-              <span class="step-label" data-value="1">Ultra-discret</span>
-              <span class="step-label" data-value="2">Discret</span>
-              <span class="step-label" data-value="3">Visible</span>
-              <span class="step-label" data-value="4">Lumineux</span>
+              <button type="button" class="step-label" data-value="1" aria-pressed="false">Ultra-discret</button>
+              <button type="button" class="step-label active" data-value="2" aria-pressed="true">Discret</button>
+              <button type="button" class="step-label" data-value="3" aria-pressed="false">Visible</button>
+              <button type="button" class="step-label" data-value="4" aria-pressed="false">Lumineux</button>
             </div>
 
             <div class="discretion-preview-box" id="discretionPreviewBox">
@@ -101,7 +103,7 @@
           </div>
 
           <div class="setting-item">
-            <label>Fichiers joints</label>
+            <label for="fileInput">Fichiers joints</label>
             <div class="file-upload-area" id="fileUploadArea">
               <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.html,.htm,.csv,.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif">
               <div class="file-upload-content">
@@ -120,7 +122,7 @@
       </div>
 
       <!-- ONGLET 2 : FOURNISSEURS -->
-      <div id="tab-providers" class="tab-content" role="tabpanel" aria-labelledby="btn-providers">
+      <div id="tab-providers" class="tab-content" role="tabpanel" aria-labelledby="btn-providers" hidden="until-found">
 
         <section class="settings-card">
           <div class="card-header">
@@ -128,18 +130,18 @@
             <p class="section-description">Configurez un ou plusieurs fournisseurs (cloud ou locaux). En cas de limite de quota, l'extension bascule automatiquement selon votre ordre de priorité.</p>
           </div>
 
-          <div class="providers-toolbar">
+          <search class="providers-toolbar" aria-label="Rechercher et filtrer les fournisseurs">
             <div class="providers-search-row">
               <input type="search" id="providerSearchInput" placeholder="Rechercher un fournisseur (OpenRouter, Ollama, Azure…)" aria-label="Rechercher un fournisseur">
               <span class="provider-filter-count" id="providerFilterCount">0 / 0</span>
             </div>
             <div class="provider-filter-group" role="group" aria-label="Filtrer les fournisseurs">
-              <button type="button" class="provider-filter-btn active" data-filter="all">Tous</button>
-              <button type="button" class="provider-filter-btn" data-filter="configured">Configurés</button>
-              <button type="button" class="provider-filter-btn" data-filter="cloud">Cloud</button>
-              <button type="button" class="provider-filter-btn" data-filter="local">Locaux</button>
+              <button type="button" class="provider-filter-btn active" data-filter="all" aria-pressed="true">Tous</button>
+              <button type="button" class="provider-filter-btn" data-filter="configured" aria-pressed="false">Configurés</button>
+              <button type="button" class="provider-filter-btn" data-filter="cloud" aria-pressed="false">Cloud</button>
+              <button type="button" class="provider-filter-btn" data-filter="local" aria-pressed="false">Locaux</button>
             </div>
-          </div>
+          </search>
 
           <div class="keys-accordion" id="providersAccordion"></div>
           <p class="help-text providers-empty-state" id="providersEmptyState" hidden>Aucun fournisseur ne correspond au filtre.</p>
@@ -148,7 +150,7 @@
         <section class="settings-card">
           <div class="card-header">
             <h2>Ordre des fournisseurs</h2>
-            <p class="section-description">Glissez les lignes pour définir l'ordre de secours entre vos fournisseurs.</p>
+            <p class="section-description">Glissez les lignes ou utilisez les flèches pour définir l'ordre de secours entre vos fournisseurs.</p>
           </div>
 
           <div class="setting-item priority-toolbar">
@@ -158,12 +160,13 @@
             </label>
           </div>
 
+          <div id="priorityAnnouncer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
           <div id="priorityList" class="priority-list"></div>
         </section>
       </div>
 
       <!-- ONGLET 3 : AVANCÉ -->
-      <div id="tab-advanced" class="tab-content" role="tabpanel" aria-labelledby="btn-advanced">
+      <div id="tab-advanced" class="tab-content" role="tabpanel" aria-labelledby="btn-advanced" hidden="until-found">
 
         <section class="settings-card">
           <div class="card-header">
@@ -182,7 +185,7 @@
             <label for="serpApiKey">Clé SerpAPI</label>
             <div class="input-group">
               <input type="password" id="serpApiKey" placeholder="Clé SerpAPI…">
-              <button type="button" class="toggle-visibility" data-target="serpApiKey">Voir</button>
+              <button type="button" class="toggle-visibility" data-target="serpApiKey" aria-pressed="false" aria-label="Afficher la clé SerpAPI">Voir</button>
             </div>
             <p class="help-text">Créer une clé sur <a href="https://serpapi.com/" target="_blank" rel="noopener">serpapi.com</a></p>
           </div>
@@ -288,7 +291,7 @@
       </div>
 
       <!-- ONGLET 4 : EXPERT -->
-      <div id="tab-expert" class="tab-content" role="tabpanel" aria-labelledby="btn-expert">
+      <div id="tab-expert" class="tab-content" role="tabpanel" aria-labelledby="btn-expert" hidden="until-found">
 
         <section class="settings-card">
           <div class="card-header">
@@ -379,9 +382,20 @@
       <div class="sticky-footer-inner">
         <button type="button" id="saveBtn" class="btn primary">Enregistrer</button>
         <button type="button" id="resetBtn" class="btn secondary">Réinitialiser</button>
-        <span id="saveStatus" class="save-status"></span>
+        <span id="saveStatus" class="save-status" role="status" aria-live="polite" aria-atomic="true"></span>
       </div>
     </footer>
+
+    <dialog id="resetConfirmDialog" class="confirm-dialog" aria-labelledby="resetDialogTitle" aria-describedby="resetDialogDesc" closedby="any">
+      <form method="dialog" class="confirm-dialog-form">
+        <h2 id="resetDialogTitle">Réinitialiser les paramètres</h2>
+        <p id="resetDialogDesc" class="section-description">Tous vos réglages synchronisés et comportements locaux seront remis par défaut. Vos clés API enregistrées seront conservées.</p>
+        <div class="confirm-dialog-actions">
+          <button type="submit" value="cancel" class="btn secondary">Annuler</button>
+          <button type="submit" value="confirm" id="resetConfirmBtn" class="btn danger">Réinitialiser</button>
+        </div>
+      </form>
+    </dialog>
   </div>
 
   <script src="provider-catalog.js"></script>

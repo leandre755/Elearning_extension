@@ -27,6 +27,7 @@
   let _mutationObserver = null;
   let _isHealing = false;
   let _healGeneration = 0;
+  let _applyGeneration = 0;
   let _renderedQuestions = new WeakSet();
   let _intersectingTargets = new WeakMap();
 
@@ -1034,6 +1035,83 @@
     _renderedQuestions = new WeakSet();
   }
 
+  const HIGHLIGHT_BATCH_SIZE = 15;
+  const HIGHLIGHT_BUDGET_MS = 50;
+
+  async function yieldToMainThread() {
+    const isHidden = typeof document !== 'undefined' && Boolean(document && document.hidden);
+    if (!isHidden && typeof rootWin.requestAnimationFrame === 'function') {
+      await new Promise((resolve) => {
+        let settled = false;
+        let rafId = null;
+        let fallbackTimerId = null;
+        const onVisibilityChange = () => {
+          if (typeof document !== 'undefined' && document && document.hidden && fallbackTimerId === null) {
+            fallbackTimerId = setTimeout(finish, 0);
+          }
+        };
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (fallbackTimerId !== null) {
+            clearTimeout(fallbackTimerId);
+            fallbackTimerId = null;
+          }
+          if (typeof document !== 'undefined' && document && typeof document.removeEventListener === 'function') {
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+          }
+          if (rafId !== null && typeof rootWin.cancelAnimationFrame === 'function') {
+            rootWin.cancelAnimationFrame(rafId);
+          }
+          resolve();
+        };
+        if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+          document.addEventListener('visibilitychange', onVisibilityChange);
+        }
+        rafId = rootWin.requestAnimationFrame(finish);
+      });
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (rootWin.scheduler && typeof rootWin.scheduler.yield === 'function') {
+      await rootWin.scheduler.yield();
+    }
+  }
+
+  function buildAnswersMap(answers) {
+    const answersMap = new Map();
+    answers.forEach(ans => {
+      if (ans && typeof ans.questionIndex === 'number') {
+        answersMap.set(ans.questionIndex, ans);
+      }
+    });
+    return answersMap;
+  }
+
+  function isQuestionDetached(question, idx) {
+    if (question.element && !isElementConnected(question.element)) {
+      console.warn(`⚠️ [Auto-Heal] Conteneur mort détecté pour Q${idx + 1} (SPA Re-render)`);
+      return true;
+    }
+    if (Array.isArray(question.options) && question.options.length > 0) {
+      const sampleElement = question.options[0].element;
+      if (sampleElement && !isElementConnected(sampleElement)) {
+        console.warn(`⚠️ [Auto-Heal] Nœuds morts détectés pour Q${idx + 1} (SPA Re-render)`);
+        return true;
+      }
+    } else if (question.inputElement && !isElementConnected(question.inputElement)) {
+      console.warn(`⚠️ [Auto-Heal] Champ texte mort pour Q${idx + 1}`);
+      return true;
+    } else if (Array.isArray(question.selects) && question.selects.length > 0 && question.selects[0].element && !isElementConnected(question.selects[0].element)) {
+      console.warn(`⚠️ [Auto-Heal] Select mort pour Q${idx + 1}`);
+      return true;
+    } else if (Array.isArray(question.dropTargets) && question.dropTargets.length > 0 && question.dropTargets[0].element && !isElementConnected(question.dropTargets[0].element)) {
+      console.warn(`⚠️ [Auto-Heal] DropTarget mort pour Q${idx + 1}`);
+      return true;
+    }
+    return false;
+  }
+
   function renderVisibleHighlights(questions, answers, color = '#00b4ff', options = {}) {
     const tempMO = _mutationObserver;
     if (tempMO) tempMO.disconnect();
@@ -1045,12 +1123,7 @@
         return 'OK';
       }
 
-      const answersMap = new Map();
-      answers.forEach(ans => {
-        if (ans && typeof ans.questionIndex === 'number') {
-          answersMap.set(ans.questionIndex, ans);
-        }
-      });
+      const answersMap = buildAnswersMap(answers);
 
       const hasExtractor = Boolean(rootWin.SafeExm.DOMExtractor);
       const isVisibleFn = (el) => {
@@ -1069,24 +1142,7 @@
         }
 
         // 🚨 AUTO-HEAL CHECK BEFORE isElementVisible (detached nodes have zero bounding rect!) 🚨
-        if (question.element && !isElementConnected(question.element)) {
-          console.warn(`⚠️ [Auto-Heal] Conteneur mort détecté pour Q${idx + 1} (SPA Re-render)`);
-          return 'NEEDS_HEAL';
-        }
-        if (Array.isArray(question.options) && question.options.length > 0) {
-          const sampleElement = question.options[0].element;
-          if (sampleElement && !isElementConnected(sampleElement)) {
-            console.warn(`⚠️ [Auto-Heal] Nœuds morts détectés pour Q${idx + 1} (SPA Re-render)`);
-            return 'NEEDS_HEAL';
-          }
-        } else if (question.inputElement && !isElementConnected(question.inputElement)) {
-          console.warn(`⚠️ [Auto-Heal] Champ texte mort pour Q${idx + 1}`);
-          return 'NEEDS_HEAL';
-        } else if (Array.isArray(question.selects) && question.selects.length > 0 && question.selects[0].element && !isElementConnected(question.selects[0].element)) {
-          console.warn(`⚠️ [Auto-Heal] Select mort pour Q${idx + 1}`);
-          return 'NEEDS_HEAL';
-        } else if (Array.isArray(question.dropTargets) && question.dropTargets.length > 0 && question.dropTargets[0].element && !isElementConnected(question.dropTargets[0].element)) {
-          console.warn(`⚠️ [Auto-Heal] DropTarget mort pour Q${idx + 1}`);
+        if (isQuestionDetached(question, idx)) {
           return 'NEEDS_HEAL';
         }
 
@@ -1108,6 +1164,78 @@
     }
   }
 
+  async function renderVisibleHighlightsBatched(questions, answers, color, options, applyGen, targetData) {
+    if (!Array.isArray(questions) || !Array.isArray(answers)) {
+      return 'OK';
+    }
+    if (questions.length <= HIGHLIGHT_BATCH_SIZE || typeof rootWin.requestAnimationFrame !== 'function') {
+      return renderVisibleHighlights(questions, answers, color, options);
+    }
+
+    const answersMap = buildAnswersMap(answers);
+    const hasExtractor = Boolean(rootWin.SafeExm.DOMExtractor);
+    const isVisibleFn = (el) => {
+      if (!el) return true;
+      if (hasExtractor && typeof rootWin.SafeExm.DOMExtractor.isElementVisible === 'function') {
+        return rootWin.SafeExm.DOMExtractor.isElementVisible(el);
+      }
+      return true;
+    };
+
+    const getNow = () => (rootWin.performance && typeof rootWin.performance.now === 'function'
+      ? rootWin.performance.now()
+      : Date.now());
+
+    if (_mutationObserver) _mutationObserver.disconnect();
+    removeTransientHighlights();
+
+    let idx = 0;
+    try {
+      while (idx < questions.length) {
+        if (applyGen !== _applyGeneration || _storedHighlightData !== targetData) {
+          return 'CANCELLED';
+        }
+        if (_mutationObserver) _mutationObserver.disconnect();
+
+        const deadline = getNow() + HIGHLIGHT_BUDGET_MS;
+        let batchCount = 0;
+        while (idx < questions.length && batchCount < HIGHLIGHT_BATCH_SIZE) {
+          const question = questions[idx];
+          const answer = answersMap.get(idx);
+          idx++;
+          if (!question || !answer) continue;
+
+          if (isQuestionDetached(question, idx - 1)) {
+            return 'NEEDS_HEAL';
+          }
+          if (question.element && !isVisibleFn(question.element)) {
+            if (getNow() >= deadline) break;
+            continue;
+          }
+
+          highlightQuestion(question, answer, color, options);
+          if (question.element) {
+            _renderedQuestions.add(question.element);
+          }
+          batchCount++;
+          if (getNow() >= deadline) break;
+        }
+
+        if (idx < questions.length) {
+          await yieldToMainThread();
+          if (applyGen !== _applyGeneration || _storedHighlightData !== targetData) {
+            return 'CANCELLED';
+          }
+        }
+      }
+      return 'OK';
+    } finally {
+      if (!_isHealing && _mutationObserver && applyGen === _applyGeneration && _storedHighlightData === targetData) {
+        observeMutationTargets(_mutationObserver, questions);
+      }
+    }
+  }
+
   function verifyAndRepair(questions, answers, color, options) {
     const qList = Array.isArray(questions)
       ? questions
@@ -1122,6 +1250,7 @@
 
   function clearAllHighlights() {
     console.log('🧹 Nettoyage des surlignages...');
+    _applyGeneration++;
     _healGeneration++;
     _isHealing = false;
     if (rootWin.SafeExm && rootWin.SafeExm.Content && typeof rootWin.SafeExm.Content.cancelPendingAutoSubmit === 'function') {
@@ -1241,7 +1370,7 @@
     console.log('✨ Application des surlignages...');
     const prevData = (options && options.append === true && _storedHighlightData) ? _storedHighlightData : null;
     clearAllHighlights();
-    const applyGen = _healGeneration;
+    const applyGen = ++_applyGeneration;
 
     const merged = prevData
       ? buildAppendMergedState(prevData, questions, answers)
@@ -1265,22 +1394,32 @@
       }
     } catch (e) { /* use default */ }
 
-    if (applyGen !== _healGeneration || _storedHighlightData !== targetData) {
+    if (applyGen !== _applyGeneration || _storedHighlightData !== targetData) {
       return 'CANCELLED';
     }
 
     targetData.color = highlightColor;
 
-    const status = renderVisibleHighlights(effectiveQuestions, effectiveAnswers, highlightColor, options);
+    const status = await renderVisibleHighlightsBatched(
+      effectiveQuestions,
+      effectiveAnswers,
+      highlightColor,
+      options,
+      applyGen,
+      targetData
+    );
+    if (status === 'CANCELLED') {
+      return status;
+    }
     if (status === 'NEEDS_HEAL') {
       await repairDeadNodes(effectiveAnswers, highlightColor);
-      if (_storedHighlightData === targetData) {
+      if (applyGen === _applyGeneration && _storedHighlightData === targetData) {
         setupHighlightObservers();
       }
       return status;
     }
 
-    if (_storedHighlightData === targetData) {
+    if (applyGen === _applyGeneration && _storedHighlightData === targetData) {
       setupHighlightObservers();
     }
     return status;

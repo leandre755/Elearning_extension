@@ -33,7 +33,8 @@ const elements = {
   providerStatsList: typeof document !== 'undefined' ? document.getElementById('providerStatsList') : null,
   providerStatsEmpty: typeof document !== 'undefined' ? document.getElementById('providerStatsEmpty') : null,
   resetStatsBtn: typeof document !== 'undefined' ? document.getElementById('resetStatsBtn') : null,
-  themeToggleBtn: typeof document !== 'undefined' ? document.getElementById('themeToggleBtn') : null
+  themeToggleBtn: typeof document !== 'undefined' ? document.getElementById('themeToggleBtn') : null,
+  popupAnnouncer: typeof document !== 'undefined' ? document.getElementById('popupAnnouncer') : null
 };
 
 const PROVIDER_DISPLAY_NAMES = Object.freeze({
@@ -52,13 +53,35 @@ const PROVIDER_ESTIMATED_COST_PER_REQ = Object.freeze({
   claude: 0.0015
 });
 
+function getThemeManager() {
+  return (typeof window !== 'undefined' && window.SafeExmTheme) ? window.SafeExmTheme : null;
+}
+
+function syncThemeToggleButton(stateInfo) {
+  const tm = getThemeManager();
+  if (tm && typeof tm.syncThemeButtonLabel === 'function' && elements.themeToggleBtn) {
+    tm.syncThemeButtonLabel(elements.themeToggleBtn, stateInfo);
+  }
+}
+
 function applyTheme(theme) {
+  const tm = getThemeManager();
+  if (tm && typeof tm.applyThemeOverride === 'function') {
+    const nextState = tm.applyThemeOverride(theme === 'dark' || theme === 'light' ? theme : null);
+    syncThemeToggleButton(nextState);
+    return;
+  }
   if (typeof document === 'undefined' || !document.documentElement) return;
   const resolved = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', resolved);
 }
 
 async function initTheme() {
+  const tm = getThemeManager();
+  if (tm && typeof tm.initThemeFromStorage === 'function') {
+    await tm.initThemeFromStorage((nextState) => syncThemeToggleButton(nextState));
+    return;
+  }
   let theme = 'light';
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     try {
@@ -145,9 +168,14 @@ function setupEventListeners() {
     });
   }
 
-  // Bascule thème Papier / Ardoise
+  // Bascule thème Papier / Ardoise (avec retour au thème système)
   if (elements.themeToggleBtn) {
     elements.themeToggleBtn.addEventListener('click', async () => {
+      const tm = getThemeManager();
+      if (tm && typeof tm.toggleTheme === 'function') {
+        await tm.toggleTheme((nextState) => syncThemeToggleButton(nextState));
+        return;
+      }
       const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
       const next = current === 'dark' ? 'light' : 'dark';
       applyTheme(next);
@@ -178,18 +206,64 @@ async function saveSettings() {
   });
 }
 
+let _progressHideTimer = null;
+
+function clearProgressHideTimer() {
+  if (_progressHideTimer !== null) {
+    clearTimeout(_progressHideTimer);
+    _progressHideTimer = null;
+  }
+}
+
+function setElementVisibility(el, visible, displayWhenVisible = '') {
+  if (!el) return;
+  el.hidden = !visible;
+  if (el.style) {
+    el.style.display = visible ? displayWhenVisible : 'none';
+  }
+}
+
+function announcePopupStatus(message) {
+  if (elements.popupAnnouncer) {
+    elements.popupAnnouncer.textContent = String(message || '');
+  }
+}
+
+function isNativeProgressElement(el) {
+  return Boolean(el && typeof el.tagName === 'string' && el.tagName.toUpperCase() === 'PROGRESS');
+}
+
 // Afficher la progression dans la barre
 function showProgress(stepMessage, percent) {
+  clearProgressHideTimer();
   if (!elements.progressSection) return;
+  const clampedPercent = Math.max(0, Math.min(100, Number(percent) || 0));
 
   // Réinitialiser les couleurs d'erreur s'il y en avait
-  elements.progressText.style.color = '';
-  elements.progressBarFill.style.background = '';
+  if (elements.progressText) {
+    if (elements.progressText.style) elements.progressText.style.color = '';
+    if (elements.progressText.classList && typeof elements.progressText.classList.remove === 'function') {
+      elements.progressText.classList.remove('is-error');
+    }
+    elements.progressText.textContent = stepMessage;
+  }
 
-  elements.progressSection.style.display = 'flex';
-  elements.progressText.textContent = stepMessage;
-  elements.progressBarFill.style.width = `${percent}%`;
-  elements.progressPercentage.textContent = `${percent}%`;
+  if (elements.progressBarFill) {
+    if (elements.progressBarFill.classList && typeof elements.progressBarFill.classList.remove === 'function') {
+      elements.progressBarFill.classList.remove('is-error');
+    }
+    if (isNativeProgressElement(elements.progressBarFill)) {
+      elements.progressBarFill.value = clampedPercent;
+    } else if (elements.progressBarFill.style) {
+      elements.progressBarFill.style.background = '';
+      elements.progressBarFill.style.width = `${clampedPercent}%`;
+    }
+  }
+
+  setElementVisibility(elements.progressSection, true, 'flex');
+  if (elements.progressPercentage) {
+    elements.progressPercentage.textContent = `${clampedPercent}%`;
+  }
 }
 
 // Vérifier la connexion API (combien de fournisseurs configurés)
@@ -456,8 +530,9 @@ function setAnalyzeButtonLabel(label) {
 
 // Analyser le quiz
 async function analyzeQuiz() {
+  clearProgressHideTimer();
   state.hasError = false;
-  if (elements.progressSection) elements.progressSection.style.display = 'flex';
+  setElementVisibility(elements.progressSection, true, 'flex');
   if (elements.analyzeBtn) {
     elements.analyzeBtn.disabled = true;
     setAnalyzeButtonLabel('Analyse en cours…');
@@ -512,8 +587,10 @@ async function analyzeQuiz() {
     await loadProviderStats();
 
     if (!state.hasError) {
-      setTimeout(() => {
-        if (elements.progressSection) elements.progressSection.style.display = 'none';
+      clearProgressHideTimer();
+      _progressHideTimer = setTimeout(() => {
+        _progressHideTimer = null;
+        setElementVisibility(elements.progressSection, false, 'flex');
       }, 2500);
     }
   }
@@ -547,35 +624,57 @@ function sendMessageToTab(tabId, message) {
 function showResults(data) {
   const qCount = data.questionsFound;
   const aCount = data.answersHighlighted;
-  showProgress(`${aCount}/${qCount} réponse${qCount > 1 ? 's' : ''} trouvée${qCount > 1 ? 's' : ''}`, 100);
+  const summary = `${aCount}/${qCount} réponse${qCount > 1 ? 's' : ''} trouvée${qCount > 1 ? 's' : ''}`;
+  showProgress(summary, 100);
+  announcePopupStatus(summary);
 }
 
 // Afficher une erreur dans la barre
 function showError(message) {
+  clearProgressHideTimer();
+  const errorText = `Erreur : ${message}`;
+  setElementVisibility(elements.progressSection, true, 'flex');
   if (elements.progressText) {
-    elements.progressText.textContent = `Erreur : ${message}`;
-    elements.progressText.style.color = 'var(--error-color)';
+    elements.progressText.textContent = errorText;
+    if (elements.progressText.style) elements.progressText.style.color = 'var(--error-color)';
+    if (elements.progressText.classList && typeof elements.progressText.classList.add === 'function') {
+      elements.progressText.classList.add('is-error');
+    }
   }
   if (elements.progressBarFill) {
-    elements.progressBarFill.style.background = 'var(--error-color)';
-    elements.progressBarFill.style.width = '100%';
+    if (elements.progressBarFill.classList && typeof elements.progressBarFill.classList.add === 'function') {
+      elements.progressBarFill.classList.add('is-error');
+    }
+    if (isNativeProgressElement(elements.progressBarFill)) {
+      elements.progressBarFill.value = 100;
+    } else if (elements.progressBarFill.style) {
+      elements.progressBarFill.style.background = 'var(--error-color)';
+      elements.progressBarFill.style.width = '100%';
+    }
   }
+  announcePopupStatus(errorText);
 }
 
 // Effacer les surlignages
 async function clearHighlights() {
+  clearProgressHideTimer();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab) {
-    chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' }).catch(() => {});
+    try {
+      await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
+    } catch { /* ignore if receiver missing */ }
   }
-  if (elements.progressSection) elements.progressSection.style.display = 'none';
+  setElementVisibility(elements.progressSection, false, 'flex');
+  announcePopupStatus('Surlignages effacés');
 }
 
 // Notifier le content script
 async function notifyContentScript(message) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab) {
-    chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    try {
+      await chrome.tabs.sendMessage(tab.id, message);
+    } catch { /* ignore if receiver missing */ }
   }
 }
 
@@ -596,16 +695,16 @@ async function checkSchemaStatus() {
     });
 
     if (!response || !response.success) {
-      if (elements.schemaStatus) elements.schemaStatus.style.display = 'none';
+      setElementVisibility(elements.schemaStatus, false, 'flex');
       return;
     }
 
     const data = response.data || response;
     if (!elements.schemaStatus) return;
 
-    elements.schemaStatus.style.display = 'flex';
+    setElementVisibility(elements.schemaStatus, true, 'flex');
     if (elements.schemaRediscoverBtn) {
-      elements.schemaRediscoverBtn.style.display = '';
+      setElementVisibility(elements.schemaRediscoverBtn, true, 'inline-flex');
     }
 
     if (data.hasSchema) {
@@ -622,11 +721,11 @@ async function checkSchemaStatus() {
       if (elements.schemaIcon) elements.schemaIcon.textContent = '';
       elements.schemaText.textContent = 'Aucun quiz détecté';
       if (elements.schemaRediscoverBtn) {
-        elements.schemaRediscoverBtn.style.display = 'none';
+        setElementVisibility(elements.schemaRediscoverBtn, false, 'inline-flex');
       }
     }
   } catch (e) {
-    if (elements.schemaStatus) elements.schemaStatus.style.display = 'none';
+    setElementVisibility(elements.schemaStatus, false, 'flex');
   }
 }
 

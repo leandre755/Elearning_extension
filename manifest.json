@@ -5,7 +5,6 @@
   "description": "Analyse les quiz en ligne et signale les réponses discrètement.",
   "permissions": [
     "tabs",
-    "activeTab",
     "storage",
     "scripting",
     "notifications",
