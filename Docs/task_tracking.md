@@ -60,11 +60,11 @@ Ce document sert de tracker séparé pour suivre l'état d'implémentation des f
 
 ## 📚 4. CONNAISSANCES — Moteur de contexte
 
-- [ ] **F-CTX-01 : Semantic Document Store**
-  - *Description* : Vector store utilisant l'API de Gemini Embedding 2 pour injecter uniquement les 3-5 chunks les plus pertinents de la base de connaissances.
-- [ ] **F-CTX-02 : Knowledge Graph par Matière**
+- [ ] **F-CTX-01 : Semantic Document Store** *(Priorité 2 — prochaine session)*
+  - *Description* : Découpage des documents de cours importés en chunks indexés et injection uniquement des 3 à 5 passages les plus pertinents par question via l'**API REST standard Gemini Embedding (`generativelanguage.googleapis.com`, sans WASM)** lorsque `geminiApiKey` est renseignée, avec **repli automatique BM25 local en JavaScript pur** quand aucune clé Gemini n'est configurée (ou hors-ligne).
+- [ ] ~~**F-CTX-02 : Knowledge Graph par Matière**~~ [Abandonné — 2026-11-23]
   - *Description* : Graphe sémantique construit au fil des quiz, réutilisé directement dans le Learning Dashboard pour le suivi visuel et l'apprentissage de l'utilisateur.
-- [ ] **F-CTX-03 : Web Scraping Contextuel**
+- [ ] ~~**F-CTX-03 : Web Scraping Contextuel**~~ [Abandonné — 2026-11-23]
   - *Description* : Extraction des slides, notes et transcriptions de la plateforme d'apprentissage hôte.
 - [x] **F-CTX-04 : Import Multi-Format Avancé**
   - *Description* : Extraction de documents de formats variés (EPUB, PPTX, Notion, YouTube, Audio, etc.).
@@ -83,17 +83,17 @@ Ce document sert de tracker séparé pour suivre l'état d'implémentation des f
 - [x] **F-AUTO-03 : Auto-Submit Intelligence**
   - *Description* : Remplissage et soumission automatique avec délai humain (jitter) et taux d'erreur configurables.
   - *État actuel* : **Complètement implémenté**. Moteur `scheduleAutoSubmit` / `cancelPendingAutoSubmit` strictement opt-in (`autoSubmitEnabled`, défaut `false`) dans `content.js`, barrière `autoSubmitMinConfidence` (défaut 85 %), délai humain jittered (`autoSubmitDelayMs`), remplissage multi-format et annulation immédiate par Panic Button (`Ctrl+Shift+E`).
-- [ ] **F-AUTO-04 : Multi-Tab Orchestration**
+- [ ] ~~**F-AUTO-04 : Multi-Tab Orchestration**~~ [Abandonné — 2026-11-23]
   - *Description* : Panneau de contrôle centralisé pour gérer les quiz s'exécutant sur plusieurs onglets.
 
 ---
 
 ## 📊 6. ANALYTICS — Suivi de performance
 
-- [ ] **F-ANA-01 : Learning Dashboard**
-  - *Description* : Historique des quiz, forces/faiblesses et courbe de progression.
-- [ ] **F-ANA-02 : Question Difficulty Tracker**
-  - *Description* : Classification automatique de la difficulté des questions.
+- [ ] **F-ANA-01 : Learning Dashboard** *(Priorité 3 — prochaine session, inclut `F-ANA-02`)*
+  - *Description* : Tableau de bord local en **texte uniquement** (aucune image stockée dans l'historique, capacité bornée) regroupant l'historique des quiz, les explications de réponses, la classification de difficulté (`F-ANA-02` fusionné), l'évolution par matière et les métriques/coûts `ProviderAnalytics`.
+- [ ] ~~**F-ANA-02 : Question Difficulty Tracker**~~ [Fusionné dans F-ANA-01 — 2026-11-23]
+  - *Description* : Classification automatique en fonction pure (Facile / Moyenne / Difficile) intégrée au Dashboard (`F-ANA-01`) et au filtrage des flashcards (`F-EXT-02`).
 - [x] **F-ANA-03 : Provider Performance Analytics**
   - *Description* : Métriques de temps de réponse, fiabilité et coûts d'API par provider.
   - *État actuel* : **Complètement implémenté**. `ProviderAnalytics` dans `providers.js` (latence EMA, taux de succès, tokens/coûts estimés, écritures coalescées single-flight et redaction des secrets), exposé par `getProviderStats` / `resetProviderStats` dans `background.js` et affiché dans `popup.html` / `popup.js`.
@@ -102,10 +102,10 @@ Ce document sert de tracker séparé pour suivre l'état d'implémentation des f
 
 ## 🔌 7. INTÉGRATIONS — Écosystème
 
-- [ ] **F-EXT-01 : Platform-Specific Adapters**
+- [ ] ~~**F-EXT-01 : Platform-Specific Adapters**~~ [Supprimé — 2026-11-23]
   - *Description* : Adaptateurs natifs pour Moodle, Canvas, Blackboard, Kahoot!, etc.
-- [ ] **F-EXT-02 : Flashcard Generation**
-  - *Description* : Génération automatique de flashcards compatibles Anki à partir des quiz résolus.
+- [ ] **F-EXT-02 : Flashcard Generation** *(Priorité 4 — prochaine session)*
+  - *Description* : Génération directe sans appel LLM supplémentaire (à partir des questions, réponses et `<explanation>` déjà produites) avec export **TSV/CSV UTF-8 compatible Anki + Markdown** (sans binaire `.apkg`/SQLite WASM).
 - [ ] ~~**F-EXT-03 : Collaboration Mode (Peer Network)**~~ [Non requis / Supprimé]
   - *Description* : Réseau P2P chiffré de partage de réponses et de schémas de domaines.
 
@@ -113,15 +113,17 @@ Ce document sert de tracker séparé pour suivre l'état d'implémentation des f
 
 ## 🎛️ 8. EXPÉRIENCE UTILISATEUR — Interface invisible
 
-- [ ] **F-UX-01 : Side Panel Intelligent**
-  - *Description* : Remplacement du popup par un Side Panel persistant.
+- [ ] **F-UX-01 : Side Panel Intelligent** *(Priorité 1 — prochaine session)*
+  - *Description* : Panneau latéral persistant via `chrome.sidePanel` **en complément du popup existant (ne pas remplacer le popup)**, totalement isolé du DOM de la page hôte (mode lecture zéro-trace) et purgé instantanément par Panic (`Ctrl+Shift+E`).
 - [x] **F-UX-02 : Contextual Tooltip System**
   - *Description* : Tooltips éphémères au survol des options au lieu de surlignages DOM invasifs.
   - *État actuel* : **Complètement implémenté**. Badges et indicateurs contextuels de confiance/cross-validation dans `highlight-manager.js` et `content.css` stockés en `WeakMap` (zéro `data-qh-*`), masqués en mode `ultra-furtif` et purgés en `< 50 ms` par `clearAllHighlights()`.
-- [ ] **F-UX-03 : Command Palette**
+- [ ] ~~**F-UX-03 : Command Palette**~~ [Abandonné — 2026-11-23]
   - *Description* : Palette de raccourcis rapides type VS Code.
-- [ ] **F-UX-04 : Onboarding Wizard**
-  - *Description* : Guide interactif d'installation et de configuration en 3 étapes.
+- [ ] **F-UX-04 : Onboarding Wizard** *(Priorité 5 — prochaine session)*
+  - *Description* : Guide interactif d'installation et de configuration en 3 étapes dans [settings.html](file:///home/omni/Code/Elearning_Ext/settings.html) (clé API ou `fcc_local`, notes de cours optionnelles, test de connexion).
+- [ ] **F-UX-05 : Explication Inline Camouflée Adaptative** *(Priorité 6 — **à réaliser en dernier, après les 5 autres chantiers**)*
+  - *Description* : Affichage discret de l'explication de la réponse directement sur la page dans une zone garantie sans chevauchement de texte (`getClientRects`/`elementsFromPoint`, repli en bloc discret sous la carte si la mise en page est trop dense), en prélevant la vraie couleur de fond sous la cible (remontée DOM/Shadow DOM + *alpha-blending*), convertie en **OKLCH** pour décaler uniquement la luminosité d'un cran réglable (légèrement plus foncé sur fond clair/moyen, légèrement plus clair dans la même teinte sur fond très sombre) avec micro-profondeur, sans signature DOM statique (`WeakMap`, `pointer-events: none`, purge Panic `< 50 ms`). Repli sur fond uni très discret ou Side Panel (`F-UX-01`) sur images de fond complexes / dégradés multicolores.
 
 ---
 
@@ -141,11 +143,24 @@ Ces tâches techniques sont issues des recommandations du rapport de diagnostic 
   - *Description* : Remplacer les appels `document.head.appendChild()` par `(document.head || document.documentElement).appendChild()` dans [highlight-manager.js](file:///home/omni/Code/Elearning_Ext/highlight-manager.js#L205) pour garantir l'injection sans erreur même lors d'un chargement de page ultra-précoce.
   - *État actuel* : **Complètement implémenté** dans `highlight-manager.js`.
   - *Lien Spécification* : [Section 4.1](file:///home/omni/Code/Elearning_Ext/Docs/analyse_technique_developpeur.md#L334)
-- [ ] **R-TECH-04 : Tokenisateur WASM local [P2]**
+- [ ] ~~**R-TECH-04 : Tokenisateur WASM local [P2]**~~ [Abandonné — 2026-11-23]
   - *Description* : Remplacer l'estimation empirique de tokens par un tokenizer compilé en WASM (ex. Tiktoken) pour calculer précisément l'empreinte de jetons et éviter les erreurs HTTP 400.
   - *Lien Spécification* : [Section 2.1](file:///home/omni/Code/Elearning_Ext/Docs/analyse_technique_developpeur.md#L93)
 - [x] **R-TECH-05 : Retry exponentiel réseau (5xx/429) [P2]**
   - *Description* : Ajouter un algorithme de retry exponentiel pour les requêtes HTTP transitoires (codes 5xx ou 429 avec en-tête Retry-After) dans [providers.js](file:///home/omni/Code/Elearning_Ext/providers.js) pour fiabiliser les providers face aux surcharges temporaires.
   - *État actuel* : **Complètement implémenté** (`fetchWithRetry` dans `providers.js` avec backoff exponentiel `500ms/1s/2s`, jitter, `Retry-After` borné et `AbortSignal`).
   - *Lien Spécification* : [Section 4.3](file:///home/omni/Code/Elearning_Ext/Docs/analyse_technique_developpeur.md#L359)
+
+---
+
+## 🎯 Ordre d'Exécution Retenu (Session Suivante)
+
+Liste validée le `2026-11-23` après arbitrage architectural (`6` chantiers conservés/adaptés, `6` abandonnés ou fusionnés ; aucune nouvelle dépendance externe ni binaire WASM) :
+
+1. **`F-UX-01`** — Side Panel Intelligent (`chrome.sidePanel` **en complément du popup**, zéro trace DOM, purge Panic)
+2. **`F-CTX-01`** — Semantic Document Store (**API REST Gemini Embedding** dès qu'une clé Gemini est active + **repli automatique BM25 local pur JS**)
+3. **`F-ANA-01`** *(avec `F-ANA-02` fusionné)* — Learning Dashboard local (**texte uniquement**, aucune image stockée, historique borné + score de difficulté pur JS + `ProviderAnalytics`)
+4. **`F-EXT-02`** — Flashcard Generation (export **TSV/CSV UTF-8 Anki + Markdown** sans rappel LLM)
+5. **`F-UX-04`** — Onboarding Wizard (guide 3 étapes dans [settings.html](file:///home/omni/Code/Elearning_Ext/settings.html))
+6. **`F-UX-05`** — Explication Inline Camouflée Adaptative (**en dernier, après les 5 autres chantiers** — prélèvement fond DOM/Shadow DOM + OKLCH adaptatif + anti-chevauchement texte + repli fond uni / Side Panel)
 
