@@ -104,6 +104,93 @@ async function broadcastToActiveTabs(actionObject) {
   return success;
 }
 
+const MISSING_RECEIVER_RE = /receiving end does not exist|could not establish connection/i;
+const ANALYZE_RETRY_DELAYS_MS = [50, 100];
+
+async function sendMessageWithMissingReceiverRetry(tabId, payload) {
+  const totalAttempts = ANALYZE_RETRY_DELAYS_MS.length + 1;
+  let lastErrorMessage = '';
+
+  for (let attempt = 0; attempt < totalAttempts; attempt++) {
+    const result = await new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, payload, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({
+            ok: false,
+            error: chrome.runtime.lastError.message || 'Erreur de communication avec l\'onglet'
+          });
+        } else {
+          resolve({ ok: true, response });
+        }
+      });
+    });
+
+    if (result.ok) {
+      return result;
+    }
+    lastErrorMessage = result.error;
+    if (!MISSING_RECEIVER_RE.test(lastErrorMessage) || attempt >= totalAttempts - 1) {
+      return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, ANALYZE_RETRY_DELAYS_MS[attempt]));
+  }
+
+  return { ok: false, error: lastErrorMessage };
+}
+
+async function sendAnalyzeQuizToTab(tabId, settings) {
+  await injectCoreScripts(tabId);
+  return sendMessageWithMissingReceiverRetry(tabId, {
+    action: 'analyzeQuiz',
+    settings,
+    forceFallback: true
+  });
+}
+
+async function handleAnalyzeQuizCommand() {
+  const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
+  if (!settings.enabled) {
+    showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
+    return false;
+  }
+
+  let activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  let httpTabs = Array.isArray(activeTabs)
+    ? activeTabs.filter((t) => t && typeof t.id === 'number' && typeof t.url === 'string' && /^https?:\/\//i.test(t.url))
+    : [];
+
+  if (httpTabs.length === 0) {
+    activeTabs = await chrome.tabs.query({ active: true });
+    httpTabs = Array.isArray(activeTabs)
+      ? activeTabs.filter((t) => t && typeof t.id === 'number' && typeof t.url === 'string' && /^https?:\/\//i.test(t.url))
+      : [];
+  }
+
+  if (httpTabs.length === 0) {
+    showNotification("Impossible de trouver l'onglet actif pour analyser. Rechargez la page.");
+    return false;
+  }
+
+  let success = false;
+  for (const t of httpTabs) {
+    try {
+      const result = await sendAnalyzeQuizToTab(t.id, settings);
+      if (result.ok) {
+        success = true;
+      } else {
+        console.warn(`[handleAnalyzeQuizCommand] Erreur d'envoi à l'onglet ${t.id}:`, result.error);
+      }
+    } catch (e) {
+      console.error(`[handleAnalyzeQuizCommand] Exception lors de l'envoi à l'onglet ${t.id}:`, e);
+    }
+  }
+
+  if (!success) {
+    showNotification("Impossible de trouver l'onglet actif pour analyser. Rechargez la page.");
+  }
+  return success;
+}
+
 if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onCommand) {
   chrome.commands.onCommand.addListener(async (command) => {
     console.log(`Command received: ${command}`);
@@ -113,20 +200,9 @@ if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onComman
         await toggleExtension();
         break;
 
-      case 'analyze-quiz': {
-        const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
-        if (!settings.enabled) {
-          showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
-          return;
-        }
-        const analyzeSuccess = await broadcastToActiveTabs({
-          action: 'analyzeQuiz',
-          settings,
-          forceFallback: true
-        });
-        if (!analyzeSuccess) showNotification("Impossible de trouver l'onglet actif pour analyser. Rechargez la page.");
+      case 'analyze-quiz':
+        await handleAnalyzeQuizCommand();
         break;
-      }
 
       case 'toggle-auto-mode':
         await toggleAutoMode();
@@ -269,12 +345,10 @@ async function analyzeCurrentQuiz(tab) {
   }
 
   try {
-    await injectCoreScripts(tab.id);
-    await chrome.tabs.sendMessage(tab.id, {
-      action: 'analyzeQuiz',
-      settings,
-      forceFallback: true
-    });
+    const result = await sendAnalyzeQuizToTab(tab.id, settings);
+    if (!result.ok) {
+      throw new Error(result.error || 'Erreur de communication avec l\'onglet');
+    }
   } catch (error) {
     console.error(`[analyzeCurrentQuiz] Échec d'envoi du message d'analyse à l'onglet ${tab.id}:`, error);
     showNotification("Impossible d'analyser le quiz. Assurez-vous que la page est entièrement chargée.");
@@ -1400,6 +1474,7 @@ if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.contextMenus.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     handleLoadSystemPrompt,
+    handleAnalyzeQuizCommand,
     handlePreWarmProviders,
     handleGetProviderStats,
     handleResetProviderStats,

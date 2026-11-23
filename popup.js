@@ -262,6 +262,10 @@ function showProgress(stepMessage, percent) {
 
   setElementVisibility(elements.progressSection, true, 'flex');
   if (elements.progressPercentage) {
+    elements.progressPercentage.hidden = false;
+    if (elements.progressPercentage.classList && typeof elements.progressPercentage.classList.remove === 'function') {
+      elements.progressPercentage.classList.remove('is-error');
+    }
     elements.progressPercentage.textContent = `${clampedPercent}%`;
   }
 }
@@ -652,6 +656,10 @@ function showError(message) {
       elements.progressBarFill.style.width = '100%';
     }
   }
+  if (elements.progressPercentage) {
+    elements.progressPercentage.textContent = '';
+    elements.progressPercentage.hidden = true;
+  }
   announcePopupStatus(errorText);
 }
 
@@ -772,6 +780,8 @@ async function rediscoverSchema() {
 
 const PopupAPI = {
   analyzeQuiz,
+  showProgress,
+  showError,
   sendMessageToTab,
   loadProviderStats,
   renderProviderStats,

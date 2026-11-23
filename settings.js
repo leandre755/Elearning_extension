@@ -211,10 +211,9 @@ async function initTheme() {
 
 // Initialisation
 document.addEventListener('DOMContentLoaded', async () => {
-  await initTheme();
   renderProviderCards();
   setupEventListeners();
-  await loadSettings();
+  await Promise.all([initTheme(), loadSettings()]);
   loadSchemas();
 });
 
@@ -676,15 +675,6 @@ function syncProviderOrder(snapshot) {
 
 // Charger les paramètres
 async function loadSettings() {
-  const syncSettings = await chrome.storage.sync.get([
-    'captureImages', 'imageMinSize', 'imageQuality',
-    'contextText',
-    'customQuestionSelector', 'customAnswerSelector',
-    'highlightColor', 'highlightIntensity',
-    'providerOrder', 'customModels', 'agenticSearch', 'autoMode',
-    'highlightDiscretion', 'showConfidenceBadge'
-  ]);
-
   const qp = window.QuizProviders;
   const providerStorageKeys = (qp && typeof qp.getAllStorageKeys === 'function')
     ? qp.getAllStorageKeys()
@@ -704,7 +694,17 @@ async function loadSettings() {
   ])];
 
   // S1 — API keys + providerConfigs + behavior options are stored in local storage
-  const localSettings = await chrome.storage.local.get(localKeys);
+  const [syncSettings, localSettings] = await Promise.all([
+    chrome.storage.sync.get([
+      'captureImages', 'imageMinSize', 'imageQuality',
+      'contextText',
+      'customQuestionSelector', 'customAnswerSelector',
+      'highlightColor', 'highlightIntensity',
+      'providerOrder', 'customModels', 'agenticSearch', 'autoMode',
+      'highlightDiscretion', 'showConfidenceBadge'
+    ]),
+    chrome.storage.local.get(localKeys)
+  ]);
 
   providerConfigs = (localSettings.providerConfigs && typeof localSettings.providerConfigs === 'object')
     ? JSON.parse(JSON.stringify(localSettings.providerConfigs))
@@ -760,30 +760,7 @@ async function loadSettings() {
   renderPriorityList();
   renderModelOverrides();
 
-  // Pré-charger les listes de modèles déjà en cache
-  if (window.ModelRegistry && typeof window.ModelRegistry.getCachedModels === 'function') {
-    try {
-      await Promise.allSettled(
-        Object.keys(providersMap).map(async (id) => {
-          const cached = await window.ModelRegistry.getCachedModels(id);
-          if (Array.isArray(cached) && cached.length > 0) {
-            syncedModelsByProvider[id] = cached;
-            const infoEl = document.getElementById(`${id}ModelsInfo`);
-            if (infoEl) {
-              const pDef = providersMap[id];
-              const defLbl = (pDef && pDef.genericProtocolConnector === true)
-                ? (cached[0]?.id || 'auto')
-                : (pDef?.defaultTextModel || 'auto');
-              infoEl.textContent = `${cached.length} modèle(s) en cache (défaut : ${defLbl})`;
-            }
-          }
-        })
-      );
-      renderModelOverrides();
-    } catch { /* ignore cache pre-load errors */ }
-  }
-
-  // Context & UI Settings
+  // Context & UI Settings (hydratés avant la lecture async du cache de modèles)
   elements.contextText.value = syncSettings.contextText || '';
   elements.customQuestionSelector.value = syncSettings.customQuestionSelector || '';
   elements.customAnswerSelector.value = syncSettings.customAnswerSelector || '';
@@ -865,6 +842,33 @@ async function loadSettings() {
   }
 
   updateBehaviorDependenciesUI();
+
+  // Pré-charger les listes de modèles déjà en cache sans bloquer l'hydratation UI principale
+  if (window.ModelRegistry && typeof window.ModelRegistry.getCachedModels === 'function') {
+    try {
+      let loadedAnyCachedModels = false;
+      await Promise.allSettled(
+        Object.keys(providersMap).map(async (id) => {
+          const cached = await window.ModelRegistry.getCachedModels(id);
+          if (Array.isArray(cached) && cached.length > 0) {
+            loadedAnyCachedModels = true;
+            syncedModelsByProvider[id] = cached;
+            const infoEl = document.getElementById(`${id}ModelsInfo`);
+            if (infoEl) {
+              const pDef = providersMap[id];
+              const defLbl = (pDef && pDef.genericProtocolConnector === true)
+                ? (cached[0]?.id || 'auto')
+                : (pDef?.defaultTextModel || 'auto');
+              infoEl.textContent = `${cached.length} modèle(s) en cache (défaut : ${defLbl})`;
+            }
+          }
+        })
+      );
+      if (loadedAnyCachedModels) {
+        renderModelOverrides();
+      }
+    } catch { /* ignore cache pre-load errors */ }
+  }
 }
 
 function updateBehaviorDependenciesUI() {
@@ -2484,7 +2488,7 @@ async function handleDeleteSchema(hostname) {
   if (typeof SchemaCache === 'undefined') return;
   await SchemaCache.clearSchema(hostname);
   showStatus(`Cache supprimé pour ${hostname}.`, 'success');
-  loadSchemas();
+  await loadSchemas();
 }
 
 async function handleClearAllSchemas() {
@@ -2497,7 +2501,7 @@ async function handleClearAllSchemas() {
   if (!confirmed) return;
   const count = await SchemaCache.clearAllSchemas();
   showStatus(`${count} site(s) supprimé(s) du cache.`, 'success');
-  loadSchemas();
+  await loadSchemas();
 }
 
 if (typeof window !== 'undefined') {

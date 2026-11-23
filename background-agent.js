@@ -790,7 +790,22 @@ const BackgroundAgent = (() => {
    * Construit le prompt ciblé de vérification pour une question unique.
    */
   function _buildVerificationPrompt(question, baseContextText, searchEvidence, settings, contextImages = []) {
-    let sys = 'You are an independent quiz verification reviewer. Analyze the single question carefully and output ONLY a valid <quiz_answers> XML block with <answer question_id="1" type="..."><confidence>0-100</confidence><explanation>brief plain-text rationale</explanation></answer>.';
+    let sys = [
+      'You are an independent quiz verification reviewer. Analyze the single question carefully and output ONLY a valid <quiz_answers> XML block.',
+      'Format:',
+      '<quiz_answers>',
+      '  <answer question_id="1" type="radio|checkbox|text|drag_drop">',
+      '    <!-- Use ONLY the tag matching the type attribute: -->',
+      '    <!-- If type="radio": <option_index>N</option_index> (1-based index from Options) -->',
+      '    <!-- If type="checkbox": <option_indices>N, M</option_indices> (1-based comma-separated indices) -->',
+      '    <!-- If type="text": <text_reply>exact answer text</text_reply> -->',
+      '    <!-- If type="drag_drop": <option_indices>N, M</option_indices> and/or <text_reply>Item -> Target</text_reply> -->',
+      '    <confidence>0-100</confidence>',
+      '    <explanation>brief plain-text rationale</explanation>',
+      '  </answer>',
+      '</quiz_answers>',
+      'Allowed type values are strictly: "radio", "checkbox", "text", or "drag_drop". Always include the selected option index/indices or text_reply tag.'
+    ].join('\n');
     const domainRulesText = buildDomainRules(
       settings?.domainPreset || 'auto',
       settings?.customDomainRules || '',
@@ -3042,13 +3057,20 @@ const BackgroundAgent = (() => {
         if (!question) { continue; }
 
         const qMeta = _getNormalizedQuestionMeta(question);
-        const rawTypeAttr = (typeMatch ? typeMatch[1] : (qMeta.rawType || qMeta.normType || 'radio')).trim().toLowerCase();
         const typeAliasMap = {
           single_choice: 'radio',
           multi_choice: 'checkbox',
           fill_blank: 'text'
         };
-        const type = typeAliasMap[rawTypeAttr] || rawTypeAttr;
+        const allowedXmlTypes = new Set(['radio', 'checkbox', 'select_matching', 'drag_drop', 'text']);
+        const fallbackRawType = String(qMeta.rawType || qMeta.normType || (qMeta.effectiveOptions.length > 0 ? 'radio' : 'text')).toLowerCase();
+        const fallbackMapped = typeAliasMap[fallbackRawType] || fallbackRawType;
+        const fallbackType = allowedXmlTypes.has(fallbackMapped)
+          ? fallbackMapped
+          : (qMeta.effectiveOptions.length > 0 ? 'radio' : 'text');
+        const rawTypeAttr = (typeMatch ? typeMatch[1] : fallbackType).trim().toLowerCase();
+        const mappedAttr = typeAliasMap[rawTypeAttr] || rawTypeAttr;
+        const type = allowedXmlTypes.has(mappedAttr) ? mappedAttr : fallbackType;
         const globalIdx = getGlobalIdx(question, questionNum);
 
         // Extraction de confidence et explanation

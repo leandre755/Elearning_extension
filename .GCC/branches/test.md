@@ -300,3 +300,39 @@
     - Passe 4 (`abbc3750`) : 2 constats (annulation pré-LLM/port `solveQuiz` `content.js`, contraste SC 1.4.11 `<progress>` clair `popup.css`) → corrigés.
     - Passe 5 (`f57b702a-5144-4f48-8643-efa834441d7e`) après correctif `_autoModeDebounceTimer` (`29a7a7ef`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
 -[Antigravity, unknown, unknown]
+
+### Run: Campagne E2E 100/100 Brave 158 décompressé + LLM réel (fcc-server)
+- **Date**: 2026-11-23
+- **Target**: `provider-catalog.js`, `background.js`, `content.js`, `providers.js`, `schema-detector.js`, `settings.js`, `popup.js`, `loader.js`, `background-agent.js`, `tests/provider-catalog.test.js`, `tests/e2e-regressions.test.js`
+- **Status**: PASS
+- **Output / Evidence**:
+  - **Environnement live** : Brave `158` réel avec extension chargée en mode décompressé (`--load-extension=/home/omni/Code/Elearning_Ext`) + `fcc-server` réel (`http://127.0.0.1:8082/v1`, modèles `groq/openai/gpt-oss-120b` et Vision `antigravity/gemini-3.8-flash-tiered`).
+  - **Passe initiale (`33/41 PASS`) & correctifs appliqués** (`8` défauts réels + `2` erreurs ESLint préexistantes + correctif d'audit) :
+    - `BUG-LIVE-01` & `BUG-LIVE-02` (`provider-catalog.js`) : `fcc_local.staticApiKey` aligné sur `'freecc'` ; modèles `fcc_local` mis à jour vers `groq/openai/gpt-oss-120b` et Vision `antigravity/gemini-3.8-flash-tiered`.
+    - `BUG-LIVE-03` (`background.js`) : extraction de `handleAnalyzeQuizCommand`, `sendAnalyzeQuizToTab` et `sendMessageWithMissingReceiverRetry` pour injecter les scripts à froid avant `analyzeQuiz`.
+    - `BUG-LIVE-04` (`schema-detector.js`) : passage de `syncConfig.customModels` au lieu de `{}` à `QuizProviders.smartRoute()`.
+    - `BUG-LIVE-06` (`settings.js`) : hydratation DOM avant les lectures async `ModelRegistry.getCachedModels()`, parallélisation `DOMContentLoaded`/`loadSettings()`, et `await loadSchemas()`.
+    - `BUG-LIVE-07` (`popup.js`) : nettoyage/masquage de `#progressPercentage` dans `showError()` et restauration dans `showProgress()`.
+    - `BUG-LIVE-08` (`loader.js`) : extraction de `hasInteractiveContent()` avec parcours borné du Shadow DOM ouvert (`MAX_SHADOW_DEPTH = 8`, `MAX_SHADOW_WALK_NODES = 1500`).
+    - `BUG-LIVE-09` (`background-agent.js`) : schéma XML strict dans `_buildVerificationPrompt()` et fallback de type normalisé dans `_parseAIResponse()`.
+    - ESLint (`providers.js:1435,1437`) : résolution de `isAllowedLLMUrl` et `getStoredProviderConfigs` via `globalThis` / `self` dans `_enforceDirectFetchPolicy`.
+  - **Audits forensiques `antibug-reviewer` (contexte frais sur `git diff --cached`)** :
+    - Passe 1 (`39ad0b78-e719-4491-bb79-5a9b2ace8235`) : constat HIGH sur la race d'initialisation asynchrone MV3 dans `content.js` (enregistrement `setupMessageListener` et export `SafeExm.Content` après `await ConfigCache.init()`) et absence de single-flight dans `ConfigCache.init()` (`providers.js`) → corrigés (`bootstrapConfig()` non bloquant avec gardes `_hasExplicitEnabledState`/`_hasExplicitAutoModeState`, `_initPromise` et `_onChangedBound` dans `providers.js`, zéro `.then(`).
+    - Passe finale (`828f1c35-a34a-4ead-ac64-7f5ee0e79ca0`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+  - **Revalidation E2E live après correctifs (`e2e_100_results.json`)** :
+    - `41/41 PASS` (`failed: 0`, `bugsObservedCount: 0`, `consoleErrorsCount: 0`, `pageErrorsCount: 0`, `secretLeaksCount: 0`).
+    - Couverture vérifiée : Suite A (`A01`..`A07c` — paramètres 4 onglets, thèmes système/clair/ardoise, `<dialog>`, upload/redimensionnement multi-formats + rejet SVG/spoofed/EXE, `41` cartes, sync & `Tester` réels `fcc_local` à vide, DnD/`Alt+ArrowUp` `#priorityList`, rechargement complet), Suite B (`B01`..`B08` — `SchemaDetector` réel, `2/2` réponses, `RÀZ` sans fermer `<details>`, erreur persistante sans `%` résiduel), Suite C (`C01`..`C10` — `system.md` protégé SW-only, `4` commandes manifeste `Ctrl+Shift+1/2/3/E` + `5` menus contextuels, `6` formats universels + `4` niveaux de discrétion + `0` signature statique, Vision réelle `9182`/`Mars`, Shadow DOM + Auto-Heal `childList`, `page-bridge.js` `MAIN` + redaction Fetch/XHR, `SchemaDetector` sur `/eval-board.html`, Mode Auto Delta + Feedback/`agentMemory` + Auto-Submit/Panic + annulation en vol, failover `429`/`500` -> `fcc_local` + `ProviderAnalytics` + Cross-Validation live `confirmed`, Anti-SSRF `7/7` URLs d'images + `3/3` hôtes LLM bloqués). Captures `01` à `10` inspectées visuellement.
+  - **Suite complète (`node --test --test-concurrency=1 tests/*.test.js`)** :
+    ```text
+    ℹ tests 155
+    ℹ suites 0
+    ℹ pass 155
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+    ℹ todo 0
+    ℹ duration_ms 33003.161929
+    ```
+  - **ESLint (`eslint .`)** : `exit 0` (`ESLINT_OK`, `0` erreur, `0` warning).
+  - **Quality Gate (`pre-commit`)** : `7/7` vérifications passées en portée `full` et à la validation du commit.
+-[Antigravity-app, unknown, unknown]

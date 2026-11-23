@@ -156,6 +156,11 @@ test('Catalog integrity: 41 total providers (5 core + 36 catalog), OS/OAuth excl
     assert.equal(gDef.genericProtocolConnector, true, `${genericKey} must be marked as a generic protocol connector`);
     assert.equal(gDef.defaultTextModel, 'auto', `${genericKey} defaultTextModel must be protocol-neutral 'auto'`);
   }
+
+  const fccDef = QuizProviders.PROVIDERS.fcc_local;
+  assert.equal(fccDef.staticApiKey, 'freecc', 'fcc_local.staticApiKey must match fcc-server default token');
+  assert.equal(fccDef.defaultTextModel, 'groq/openai/gpt-oss-120b');
+  assert.equal(fccDef.defaultVisionModel, 'antigravity/gemini-3.8-flash-tiered');
 });
 
 // ===========================================================================
@@ -315,15 +320,15 @@ test('QuizProviders.callProvider routes headers, URLs, max_completion_tokens, An
     assert.equal(call.headers['x-api-key'], 'tok-ac');
     assert.equal(call.headers.Authorization, undefined);
 
-    // fcc_local with empty key uses fallback static key ('fcc-local') & Anthropic /v1/messages on 127.0.0.1:8082
-    const fccRes = await QuizProviders.callProvider('fcc_local', '', 'antigravity/gemini-4-hydrogen', 'Ping', [], {
+    // fcc_local with empty key uses fallback static key ('freecc') & Anthropic /v1/messages on 127.0.0.1:8082
+    const fccRes = await QuizProviders.callProvider('fcc_local', '', 'groq/openai/gpt-oss-120b', 'Ping', [], {
       providerConfig: { enabled: true }
     });
     assert.equal(fccRes, 'claude-ok');
     call = fetchCalls.at(-1);
     assert.equal(call.url, 'http://127.0.0.1:8082/v1/messages');
-    assert.equal(call.headers['x-api-key'], 'fcc-local');
-    assert.equal(call.headers.Authorization, 'Bearer fcc-local');
+    assert.equal(call.headers['x-api-key'], 'freecc');
+    assert.equal(call.headers.Authorization, 'Bearer freecc');
 
     // ollama local with empty key uses fallback static key & /v1 normalization
     await QuizProviders.callProvider('ollama', '', 'qwen3.8:27b', 'Ping', [], {
@@ -592,11 +597,11 @@ test('BackgroundAgent._callLLMWithTools routes agentrouter, anthropic_compatible
       }
     };
 
-    const fcc = await BackgroundAgent._callLLMWithTools('fcc_local', apiKeys, 'antigravity/gemini-4-hydrogen', history, [], dummyTools);
+    const fcc = await BackgroundAgent._callLLMWithTools('fcc_local', apiKeys, 'groq/openai/gpt-oss-120b', history, [], dummyTools);
     assert.equal(fcc.toolCalls[0].name, 'answer_quiz');
     assert.equal(fetchCalls.at(-1).url, 'http://127.0.0.1:8082/v1/messages');
-    assert.equal(fetchCalls.at(-1).headers['x-api-key'], 'fcc-local');
-    assert.equal(fetchCalls.at(-1).headers.Authorization, 'Bearer fcc-local');
+    assert.equal(fetchCalls.at(-1).headers['x-api-key'], 'freecc');
+    assert.equal(fetchCalls.at(-1).headers.Authorization, 'Bearer freecc');
 
     const ar = await BackgroundAgent._callLLMWithTools('agentrouter', apiKeys, 'claude-fable-5-2', history, [], dummyTools);
     assert.equal(ar.toolCalls[0].name, 'answer_quiz');

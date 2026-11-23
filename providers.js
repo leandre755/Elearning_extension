@@ -27,6 +27,8 @@ const ConfigCache = (() => {
 
   let _data = {};
   let _initialized = false;
+  let _initPromise = null;
+  let _onChangedBound = false;
   const _listeners = [];
 
   const SYNC_KEYS = [
@@ -50,32 +52,41 @@ const ConfigCache = (() => {
     'serpApiKey', 'contextFiles'
   ])];
 
-  async function init() {
+  function init() {
     if (_initialized) {
-      return;
+      return Promise.resolve();
+    }
+    if (_initPromise) {
+      return _initPromise;
     }
     if (typeof chrome === 'undefined' || !chrome.storage) {
-      return;
+      return Promise.resolve();
     }
-    try {
-      const [syncData, localData] = await Promise.all([
-        chrome.storage.sync ? chrome.storage.sync.get(SYNC_KEYS) : Promise.resolve({}),
-        chrome.storage.local ? chrome.storage.local.get(LOCAL_KEYS) : Promise.resolve({})
-      ]);
-      _data = { ...syncData, ...localData };
-      _initialized = true;
+    _initPromise = (async () => {
+      try {
+        const [syncData, localData] = await Promise.all([
+          chrome.storage.sync ? chrome.storage.sync.get(SYNC_KEYS) : Promise.resolve({}),
+          chrome.storage.local ? chrome.storage.local.get(LOCAL_KEYS) : Promise.resolve({})
+        ]);
+        _data = { ...syncData, ...localData };
+        _initialized = true;
 
-      if (chrome.storage.onChanged && typeof chrome.storage.onChanged.addListener === 'function') {
-        chrome.storage.onChanged.addListener((changes) => {
-          for (const [key, { newValue }] of Object.entries(changes)) {
-            _data[key] = newValue;
-          }
-          _listeners.forEach(cb => cb(changes));
-        });
+        if (!_onChangedBound && chrome.storage.onChanged && typeof chrome.storage.onChanged.addListener === 'function') {
+          chrome.storage.onChanged.addListener((changes) => {
+            for (const [key, { newValue }] of Object.entries(changes)) {
+              _data[key] = newValue;
+            }
+            _listeners.forEach(cb => cb(changes));
+          });
+          _onChangedBound = true;
+        }
+      } catch (e) {
+        console.error('❌ ConfigCache: Erreur d\'initialisation:', e.message);
+      } finally {
+        _initPromise = null;
       }
-    } catch (e) {
-      console.error('❌ ConfigCache: Erreur d\'initialisation:', e.message);
-    }
+    })();
+    return _initPromise;
   }
 
   function get(key) {
@@ -1430,11 +1441,12 @@ const QuizProviders = (() => {
       throw new Error('URL non autorisée dans le Service Worker');
     }
 
-    if (typeof isAllowedLLMUrl === 'function') {
-      const storedConfigs = typeof getStoredProviderConfigs === 'function'
-        ? await getStoredProviderConfigs()
+    const swScope = typeof globalThis !== 'undefined' ? globalThis : self;
+    if (typeof swScope.isAllowedLLMUrl === 'function') {
+      const storedConfigs = typeof swScope.getStoredProviderConfigs === 'function'
+        ? await swScope.getStoredProviderConfigs()
         : {};
-      if (!isAllowedLLMUrl(parsedUrl, storedConfigs)) {
+      if (!swScope.isAllowedLLMUrl(parsedUrl, storedConfigs)) {
         throw new Error('URL non autorisée pour les appels LLM du Service Worker');
       }
       return;

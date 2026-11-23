@@ -807,26 +807,25 @@ const ProviderCatalog = (() => {
       tierLabel: 'Local',
       baseUrl: 'http://127.0.0.1:8082/v1',
       apiKeyField: 'fccLocalApiKey',
-      staticApiKey: 'fcc-local',
-      keyPlaceholder: 'Optionnelle (ANTHROPIC_AUTH_TOKEN si activé)',
+      staticApiKey: 'freecc',
+      keyPlaceholder: 'Optionnelle (défaut : freecc, ou ANTHROPIC_AUTH_TOKEN)',
       baseUrlPlaceholder: 'http://127.0.0.1:8082/v1',
       supportsCustomBaseUrl: true,
       allowsLoopbackBaseUrl: true,
       normalizeV1: true,
       messagesPath: '/messages',
       sendBearerAuth: true,
-      defaultTextModel: 'nvidia_nim/nvidia/nemotron-3-super-120b-a12b',
-      defaultVisionModel: 'antigravity/gemini-4-hydrogen',
+      defaultTextModel: 'groq/openai/gpt-oss-120b',
+      defaultVisionModel: 'antigravity/gemini-3.8-flash-tiered',
       textModels: [
-        modelEntry('nvidia_nim/nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B (fcc-server)', 1048576, true),
-        modelEntry('antigravity/gemini-4-hydrogen', 'Antigravity Gemini 4 Hydrogen (fcc-server)', 1048576, true),
-        modelEntry('claude-fable-5-2', 'Claude Fable 5.2 (fcc-server)', 1000000, true),
-        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5 (fcc-server)', 1000000, true)
+        modelEntry('groq/openai/gpt-oss-120b', 'Groq GPT-OSS 120B (fcc-server)', 131072, true),
+        modelEntry('nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b', 'Nemotron 3 Ultra 550B (fcc-server)', 1048576, true),
+        modelEntry('open_router/nvidia/nemotron-3-ultra-550b-a55b:free', 'OpenRouter Nemotron 3 Ultra 550B Free (fcc-server)', 1048576, true),
+        modelEntry('antigravity/gemini-3.8-flash-tiered', 'Antigravity Gemini 3.8 Flash (fcc-server)', 1048576, true)
       ],
       visionModels: [
-        modelEntry('antigravity/gemini-4-hydrogen', 'Antigravity Gemini 4 Hydrogen Vision (fcc-server)', 1048576, true),
-        modelEntry('nvidia_nim/nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B Vision (fcc-server)', 1048576, true),
-        modelEntry('claude-sonnet-5-5', 'Claude Sonnet 5.5 Vision (fcc-server)', 1000000, true)
+        modelEntry('antigravity/gemini-3.8-flash-tiered', 'Antigravity Gemini 3.8 Flash Vision (fcc-server)', 1048576, true),
+        modelEntry('nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b', 'Nemotron 3.5 Super VL 120B Vision (fcc-server)', 1048576, true)
       ]
     },
 

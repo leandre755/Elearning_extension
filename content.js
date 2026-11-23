@@ -1,6 +1,6 @@
 // content.js - Safe Exm Orchestrator & Parser (CRIT-01, CRIT-03, F-AUTO-02, F-AUTO-03)
 /* global ConfigCache, SchemaDetector, SchemaCache, DOMExtractor, Number, Boolean, Array, RegExp */
-(async function () {
+(function () {
   'use strict';
 
   const rootWin = typeof window !== 'undefined' ? window : globalThis;
@@ -15,6 +15,8 @@
   rootWin.SafeExm = rootWin.SafeExm || {};
 
   let isEnabled = true;
+  let _hasExplicitEnabledState = false;
+  let _hasExplicitAutoModeState = false;
   let pendingTextAnswers = [];
 
   // Auto Mode Tracking & Observer (déclarés ici pour éviter toute TDZ)
@@ -131,25 +133,26 @@
     'passiveNetworkIntercept'
   ];
 
-  // Initialisation de la configuration au chargement
-  try {
-    if (typeof ConfigCache !== 'undefined' && ConfigCache) {
-      if (typeof ConfigCache.isInitialized === 'function' && !ConfigCache.isInitialized() && typeof ConfigCache.init === 'function') {
-        await ConfigCache.init();
-      }
-      const rawEnabled = typeof ConfigCache.get === 'function' ? ConfigCache.get('enabled') : undefined;
-      if (rawEnabled !== undefined) {
-        isEnabled = rawEnabled === true;
-      }
+  async function bootstrapConfig() {
+    try {
+      if (typeof ConfigCache !== 'undefined' && ConfigCache) {
+        if (typeof ConfigCache.isInitialized === 'function' && !ConfigCache.isInitialized() && typeof ConfigCache.init === 'function') {
+          await ConfigCache.init();
+        }
+        if (!_hasExplicitEnabledState && typeof ConfigCache.get === 'function') {
+          const rawEnabled = ConfigCache.get('enabled');
+          if (rawEnabled !== undefined) {
+            isEnabled = rawEnabled === true;
+          }
+        }
 
-      // Auto Mode Bootstrapping
-      if (typeof ConfigCache.get === 'function' && ConfigCache.get('autoMode') === true) {
-        setupAutoModeObserver();
-      }
+        // Auto Mode Bootstrapping
+        if (!_hasExplicitAutoModeState && typeof ConfigCache.get === 'function' && ConfigCache.get('autoMode') === true && isExtensionEnabled()) {
+          setupAutoModeObserver();
+        }
 
-      // Opt-in MAIN-world passive network interception bootstrap (non-blocking, zero await before ContentAPI export)
-      if (isEnabled && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === 'function') {
-        void (async () => {
+        // Opt-in MAIN-world passive network interception bootstrap
+        if (isExtensionEnabled() && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === 'function') {
           try {
             const localBridgeCfg = await chrome.storage.local.get(['passiveNetworkIntercept']);
             if (isExtensionEnabled() && localBridgeCfg && localBridgeCfg.passiveNetworkIntercept === true) {
@@ -158,14 +161,14 @@
           } catch {
             /* ignore passive bridge bootstrap errors */
           }
-        })();
+        }
       }
+    } catch (e) {
+      console.warn('⚠️ Erreur initialisation ConfigCache:', e.message);
     }
-  } catch (e) {
-    console.warn('⚠️ Erreur initialisation ConfigCache:', e.message);
   }
 
-  // Setup message listener
+  // Register listener synchronously so injectCoreScripts() + tabs.sendMessage never race on cold tabs
   setupMessageListener();
 
   console.log('🚀 Safe Exm - Cœur d\'orchestration chargé avec succès !');
@@ -198,6 +201,9 @@
   // ──────────────────────────────────────────────
 
   function isExtensionEnabled() {
+    if (_hasExplicitEnabledState) {
+      return Boolean(isEnabled);
+    }
     if (isEnabled === false) return false;
     try {
       if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.get === 'function') {
@@ -271,6 +277,7 @@
 
   // Listen to configuration change to toggle Auto Mode, Panic abort & opt-in network bridge
   function setExtensionEnabled(nextEnabled) {
+    _hasExplicitEnabledState = true;
     isEnabled = Boolean(nextEnabled);
     if (!isEnabled) {
       cancelOngoingAnalyses();
@@ -285,6 +292,7 @@
   if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.onChange === 'function') {
     ConfigCache.onChange((changes) => {
       if (changes.autoMode) {
+        _hasExplicitAutoModeState = true;
         if (changes.autoMode.newValue === true) {
           setupAutoModeObserver();
         } else {
@@ -1353,6 +1361,7 @@
     getAnalyzedQuestionTexts: () => _analyzedQuestionTexts,
     clearAnalyzedQuestionTexts: () => _analyzedQuestionTexts.clear(),
     setEnabled: (val) => {
+      _hasExplicitEnabledState = true;
       isEnabled = Boolean(val);
       if (!isEnabled) {
         cancelPendingAutoSubmit();
@@ -1366,4 +1375,6 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = ContentAPI;
   }
+
+  void bootstrapConfig();
 })();

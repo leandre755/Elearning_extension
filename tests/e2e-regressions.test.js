@@ -1476,3 +1476,522 @@ test('ANTIBUG-P3: strict lowercase beats punctuation strip, arrow before colon, 
   assert.ok(sk.includes('The <title> element must be located'), 'Skeleton must retain sibling <h2> stem');
   assert.ok(sk.includes('<input[type=radio]'), 'Skeleton must retain radios');
 });
+
+// ===========================================================================
+// BUG-LIVE-03..09: Live Brave + fcc-server E2E 100/100 Regressions
+// ===========================================================================
+test('BUG-LIVE-03: injectCoreScripts + synchronous content.js listener avoids MV3 init race, preserves toggleExtension, and deduplicates onChanged', async () => {
+  const executedFiles = [];
+  let sendAttempts = 0;
+  let syncContentDefinedOnExec = false;
+
+  function createDelayedTabVm(tabDoc, storageValues, delayMs) {
+    const tabListeners = [];
+    const onChangedListeners = [];
+    const storageDelay = () => new Promise((r) => setTimeout(r, delayMs));
+
+    const tabChrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_msg, cb) => {
+          if (typeof cb === 'function') cb({ success: true });
+        },
+        onMessage: { addListener: (fn) => tabListeners.push(fn) },
+        connect: () => {
+          const onMsg = [];
+          const onDisc = [];
+          return {
+            name: 'solveQuiz',
+            onMessage: { addListener: (fn) => onMsg.push(fn) },
+            onDisconnect: { addListener: (fn) => onDisc.push(fn) },
+            postMessage: () => {
+              queueMicrotask(() => {
+                onMsg.forEach((fn) => fn({
+                  success: true,
+                  answers: [{ questionIndex: 0, optionIndices: [1], confidence: 99, explanation: 'Four' }],
+                  metadata: { questionsTotal: 1, answersFound: 1, provider: 'fcc_local', model: 'm1', totalDurationMs: 5 }
+                }));
+              });
+            },
+            disconnect: () => {}
+          };
+        }
+      },
+      storage: {
+        sync: {
+          get: async () => {
+            await storageDelay();
+            return { ...storageValues.sync };
+          }
+        },
+        local: {
+          get: async () => {
+            await storageDelay();
+            return { ...storageValues.local };
+          }
+        },
+        onChanged: {
+          addListener: (fn) => onChangedListeners.push(fn)
+        }
+      }
+    };
+
+    const tabSandbox = {
+      document: tabDoc,
+      window: null,
+      globalThis: null,
+      location: { href: 'http://127.0.0.1:44737/eval-board.html', hostname: '127.0.0.1', origin: 'http://127.0.0.1:44737' },
+      chrome: tabChrome,
+      console: { log: () => {}, warn: () => {}, error: () => {}, group: () => {}, groupEnd: () => {} },
+      Node: { ELEMENT_NODE: 1, TEXT_NODE: 3 },
+      MutationObserver: function () { return { observe() {}, disconnect() {} }; },
+      IntersectionObserver: function () { return { observe() {}, disconnect() {} }; },
+      AbortController, AbortSignal, URL, WeakMap, WeakSet, Set, Map,
+      Array, Object, String, Number, Boolean, Date, Math, JSON, RegExp, Error, Promise,
+      parseInt, isNaN, setTimeout, clearTimeout
+    };
+    tabSandbox.window = tabSandbox;
+    tabSandbox.globalThis = tabSandbox;
+    tabSandbox.self = tabSandbox;
+
+    const dispatchToTab = (msg) => new Promise((resolve) => {
+      if (tabListeners.length === 0) {
+        resolve({ missingReceiver: true });
+        return;
+      }
+      let settled = false;
+      const sendResponse = (resp) => {
+        if (!settled) {
+          settled = true;
+          resolve({ missingReceiver: false, response: resp });
+        }
+      };
+      for (const fn of tabListeners) {
+        const keepOpen = fn(msg, {}, sendResponse);
+        if (!keepOpen && !settled) {
+          queueMicrotask(() => {
+            if (!settled) {
+              settled = true;
+              resolve({ missingReceiver: false, response: undefined });
+            }
+          });
+        }
+      }
+    });
+
+    return { tabSandbox, tabListeners, onChangedListeners, dispatchToTab };
+  }
+
+  // Build real minimal quiz DOM inside tab VM 1
+  const doc1 = makeDoc();
+  const q1 = makeElement('DIV', { class: 'question-card' }, [
+    makeElement('H3', { class: 'question-text' }, ['Question 1: 2 + 2?']),
+    makeElement('LABEL', {}, [makeElement('INPUT', { type: 'radio', name: 'q1', value: '3' }), '3']),
+    makeElement('LABEL', {}, [makeElement('INPUT', { type: 'radio', name: 'q1', value: '4' }), '4'])
+  ]);
+  doc1.body.appendChild(q1);
+  const vm1 = createDelayedTabVm(doc1, { sync: { enabled: true }, local: {} }, 20);
+
+  const notifications = [];
+  const swSandbox = {
+    console: { log: () => {}, warn: () => {}, error: () => {} },
+    URL, Promise, Map, Set, Object, Array, Number, Boolean, String, RegExp, Date, Error, Math, JSON,
+    encodeURIComponent, decodeURIComponent, parseInt, isNaN,
+    setTimeout, clearTimeout, AbortController, AbortSignal,
+    module: { exports: {} },
+    globalThis: null,
+    chrome: {
+      runtime: {
+        lastError: null,
+        getURL: (p) => `chrome-extension://test/${p}`,
+        onMessage: { addListener: () => {} },
+        onConnect: { addListener: () => {} },
+        onInstalled: { addListener: () => {} }
+      },
+      storage: {
+        sync: { get: async () => ({ enabled: true }) },
+        local: { get: async () => ({}) }
+      },
+      tabs: {
+        query: async (q) => (q.currentWindow ? [{ id: 77, url: 'chrome-extension://test/settings.html', active: true }] : [{ id: 88, url: 'http://127.0.0.1:44737/eval-board.html', active: true }]),
+        sendMessage: (tabId, msg, cb) => {
+          sendAttempts++;
+          if (tabId !== 88) {
+            swSandbox.chrome.runtime.lastError = { message: 'Could not establish connection. Receiving end does not exist.' };
+            cb(undefined);
+            swSandbox.chrome.runtime.lastError = null;
+            return;
+          }
+          vm1.dispatchToTab(msg).then((res) => {
+            if (res.missingReceiver) {
+              swSandbox.chrome.runtime.lastError = { message: 'Could not establish connection. Receiving end does not exist.' };
+              cb(undefined);
+              swSandbox.chrome.runtime.lastError = null;
+            } else {
+              swSandbox.chrome.runtime.lastError = null;
+              cb(res.response);
+            }
+          });
+        },
+        onRemoved: { addListener: () => {} }
+      },
+      scripting: {
+        executeScript: async ({ target, func, files }) => {
+          executedFiles.push({ tabId: target.tabId, files });
+          if (typeof func === 'function') {
+            return [{ result: Boolean(vm1.tabSandbox.__quizHelperLoaded) }];
+          }
+          for (const file of files || []) {
+            vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, file), 'utf8'), vm1.tabSandbox);
+            if (file === 'content.js') {
+              syncContentDefinedOnExec = Boolean(vm1.tabSandbox.SafeExm && vm1.tabSandbox.SafeExm.Content);
+            }
+          }
+          return [];
+        }
+      },
+      notifications: { create: (opts) => notifications.push(opts) },
+      commands: { onCommand: { addListener: () => {} } },
+      contextMenus: { removeAll: (cb) => cb && cb(), create: () => {}, onClicked: { addListener: () => {} } }
+    }
+  };
+  swSandbox.self = swSandbox;
+  swSandbox.globalThis = swSandbox;
+  vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, 'background.js'), 'utf8'), swSandbox);
+
+  const ok = await swSandbox.module.exports.handleAnalyzeQuizCommand();
+  assert.equal(ok, true, 'handleAnalyzeQuizCommand must deliver analyzeQuiz while ConfigCache.init() is still pending');
+  assert.equal(sendAttempts, 1, 'Synchronous onMessage listener registration must succeed on first send attempt');
+  assert.equal(syncContentDefinedOnExec, true, 'SafeExm.Content must be exported synchronously when content.js finishes top-level execution');
+  assert.ok(executedFiles.some((e) => Array.isArray(e.files) && e.files.includes('content.js')));
+  assert.equal(notifications.length, 0);
+
+  // 2. Concurrent ConfigCache.init() + early toggleExtension(false) must not clobber disabled state or duplicate onChanged
+  const vm2 = createDelayedTabVm(makeDoc(), { sync: { enabled: true }, local: {} }, 20);
+  for (const file of ['provider-catalog.js', 'providers.js', 'schema-cache.js', 'schema-detector.js', 'dom-extractor.js', 'highlight-manager.js', 'content.js']) {
+    vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, file), 'utf8'), vm2.tabSandbox);
+  }
+  assert.equal(vm2.tabListeners.length, 1, 'content.js must register runtime.onMessage listener synchronously');
+  assert.equal(vm2.tabSandbox.ConfigCache.isInitialized(), false, 'ConfigCache must still be awaiting delayed storage here');
+
+  const toggleRes = await vm2.dispatchToTab({ action: 'toggleExtension', enabled: false });
+  assert.equal(toggleRes.response?.success, true);
+  assert.equal(vm2.tabSandbox.SafeExm.Content.getEnabled(), false);
+
+  await vm2.tabSandbox.ConfigCache.init();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(vm2.tabSandbox.SafeExm.Content.getEnabled(), false, 'Late bootstrapConfig() must NOT clobber explicit toggleExtension(false)');
+  assert.equal(vm2.onChangedListeners.length, 1, 'Concurrent ConfigCache.init() calls must register chrome.storage.onChanged once');
+});
+
+test('BUG-LIVE-04: SchemaDetector.discoverSchema forwards syncConfig.customModels to smartRoute()', async () => {
+  const doc = makeDoc();
+  const card = makeElement('DIV', { class: 'eval-card' }, [
+    makeElement('DIV', { class: 'eval-prompt' }, ['Which planet is closest to the Sun?']),
+    makeElement('SPAN', { class: 'eval-choice', role: 'button' }, ['Mars']),
+    makeElement('SPAN', { class: 'eval-choice', role: 'button' }, ['Mercury'])
+  ]);
+  doc.body.appendChild(card);
+
+  let capturedOverrides = null;
+  const expectedOverrides = { fcc_local: { text: 'groq/openai/gpt-oss-120b' } };
+
+  const sb = {
+    document: doc,
+    window: null,
+    location: { href: 'http://127.0.0.1:44737/eval-board.html', hostname: '127.0.0.1' },
+    Node: { ELEMENT_NODE: 1, TEXT_NODE: 3 },
+    console: { log: () => {}, warn: () => {}, error: () => {} },
+    module: { exports: {} },
+    chrome: {
+      storage: {
+        sync: { get: async () => ({ providerOrder: ['fcc_local'], customModels: expectedOverrides }) },
+        local: { get: async () => ({ providerConfigs: { fcc_local: { enabled: true } } }) }
+      }
+    },
+    QuizProviders: {
+      getAllStorageKeys: () => ['providerConfigs'],
+      getAllApiKeyFields: () => [],
+      smartRoute: async (_prompt, _imgs, _cfg, _prio, modelOverrides) => {
+        capturedOverrides = modelOverrides;
+        return {
+          providerName: 'fcc_local',
+          model: modelOverrides?.fcc_local?.text || 'default',
+          text: JSON.stringify({
+            platform: 'Custom Board',
+            confidence: 0.95,
+            questionContainer: '.eval-card',
+            questionText: '.eval-prompt',
+            optionItems: '.eval-choice',
+            optionInput: null,
+            optionLabel: null,
+            textInput: null,
+            isCustomUI: true
+          })
+        };
+      }
+    }
+  };
+  sb.window = sb;
+  vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, 'schema-detector.js'), 'utf8'), sb);
+
+  const schema = await sb.SchemaDetector.discoverSchema(true);
+  assert.deepEqual(capturedOverrides, expectedOverrides, 'discoverSchema must pass syncConfig.customModels as 5th smartRoute argument');
+  assert.equal(schema?.platform, 'Custom Board');
+});
+
+test('BUG-LIVE-06: settings.js hydrates form controls before deferred getCachedModels and awaits loadSchemas on clearAll', async () => {
+  const doc = makeDoc();
+  const domListeners = {};
+  doc.addEventListener = (t, fn) => { (domListeners[t] = domListeners[t] || []).push(fn); };
+  const enhanceEl = (el) => {
+    el.dataset = {};
+    el._listeners = {};
+    el.addEventListener = (t, fn) => { (el._listeners[t] = el._listeners[t] || []).push(fn); };
+    el.removeEventListener = () => {};
+    el.focus = () => {};
+    el.scrollIntoView = () => {};
+    el.replaceChildren = (...nodes) => {
+      el.childNodes = [];
+      nodes.forEach((n) => el.appendChild(n));
+    };
+    el.classList.toggle = (c, force) => {
+      const has = el.classList.contains(c);
+      const next = force === undefined ? !has : Boolean(force);
+      if (next) el.classList.add(c);
+      else el.classList.remove(c);
+      return next;
+    };
+    const origSetAttr = el.setAttribute;
+    el.setAttribute = (name, val) => {
+      origSetAttr.call(el, name, val);
+      if (String(name).startsWith('data-')) {
+        const camel = String(name).slice(5).replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
+        el.dataset[camel] = String(val);
+      }
+    };
+    return el;
+  };
+  doc.createElement = (tag) => enhanceEl(makeElement(tag));
+  doc.createTextNode = (text) => ({ nodeType: 3, textContent: String(text), parentNode: null });
+
+  const settingsIds = [
+    'providersAccordion', 'providerSearchInput', 'providerFilterCount', 'providersEmptyState',
+    'showAllPriorityProviders', 'showAllModelOverrides', 'serpApiKey', 'agenticSearch', 'autoMode',
+    'captureImages', 'imageMinSize', 'imageMinSizeDisplay', 'imageQuality', 'imageQualityDisplay',
+    'priorityList', 'priorityAnnouncer', 'modelOverrides', 'contextText', 'fileInput', 'fileUploadArea',
+    'fileList', 'fileBudgetInfo', 'customQuestionSelector', 'customAnswerSelector', 'highlightColor',
+    'highlightIntensity', 'schemaList', 'refreshSchemasBtn', 'clearAllSchemasBtn', 'saveBtn',
+    'resetBtn', 'saveStatus', 'discretionSlider', 'highlightPreviewElement', 'discretionDescription',
+    'colorCustomizerRow', 'showConfidenceBadge', 'domainPreset', 'customDomainRules',
+    'crossValidationEnabled', 'crossValidationThreshold', 'crossValidationThresholdDisplay',
+    'crossValidationOptionsRow', 'autoSubmitEnabled', 'autoSubmitMinConfidence',
+    'autoSubmitMinConfidenceDisplay', 'autoSubmitDelayMs', 'autoSubmitDelayMsDisplay',
+    'autoSubmitOptionsGroup', 'passiveNetworkIntercept', 'themeToggleBtn'
+  ];
+
+  const byId = new Map();
+  for (const id of settingsIds) {
+    const el = enhanceEl(makeElement(id === 'discretionSlider' || id === 'fileInput' ? 'INPUT' : 'DIV', { id }));
+    doc.body.appendChild(el);
+    byId.set(id, el);
+  }
+
+  let schemasListed = [{ hostname: 'example.org', platform: 'Test', confidence: 0.9, discoveredAt: '2026-11-23T00:00:00Z' }];
+  let listCalls = 0;
+  const dialog = enhanceEl(makeElement('DIALOG', { id: 'resetConfirmDialog' }));
+  const dTitle = enhanceEl(makeElement('H2', { id: 'resetDialogTitle' }));
+  const dDesc = enhanceEl(makeElement('P', { id: 'resetDialogDesc' }));
+  const dConfirm = enhanceEl(makeElement('BUTTON', { id: 'resetConfirmBtn' }));
+  dialog._listeners = {};
+  dialog.addEventListener = (t, fn) => { (dialog._listeners[t] = dialog._listeners[t] || []).push(fn); };
+  dialog.removeEventListener = () => {};
+  dialog.showModal = () => {
+    dialog.returnValue = 'confirm';
+    queueMicrotask(() => (dialog._listeners.close || []).slice().forEach((fn) => fn()));
+  };
+  dialog.appendChild(dTitle);
+  dialog.appendChild(dDesc);
+  dialog.appendChild(dConfirm);
+  doc.body.appendChild(dialog);
+  byId.set('resetConfirmDialog', dialog);
+  byId.set('resetDialogTitle', dTitle);
+  byId.set('resetDialogDesc', dDesc);
+  byId.set('resetConfirmBtn', dConfirm);
+  doc.getElementById = (id) => byId.get(id) || doc.documentElement.querySelector(`#${id}`);
+
+  let resolveCacheGate;
+  const cacheGate = new Promise((r) => { resolveCacheGate = r; });
+  let resolveCacheStarted;
+  const cacheStarted = new Promise((r) => { resolveCacheStarted = r; });
+
+  const sandbox = {
+    document: doc,
+    window: null,
+    globalThis: null,
+    console: { log: () => {}, warn: () => {}, error: () => {} },
+    Date, Math, JSON, Promise, Set, Map, Array, Object, Number, String, Boolean, URL,
+    setTimeout, clearTimeout, parseInt, parseFloat, isNaN,
+    location: { reload: () => {} },
+    confirm: () => false,
+    QuizProviders: {
+      PROVIDERS: { groq: { name: 'Groq', apiKeyField: 'groqApiKey', defaultTextModel: 'm1' } },
+      DEFAULT_PRIORITY: ['groq'],
+      getAllStorageKeys: () => ['groqApiKey', 'providerConfigs'],
+      isProviderConfigured: () => false
+    },
+    ModelRegistry: {
+      getCachedModels: async () => {
+        resolveCacheStarted();
+        await cacheGate;
+        return [{ id: 'm1' }];
+      }
+    },
+    SchemaCache: {
+      listCachedSchemas: async () => {
+        listCalls++;
+        return schemasListed;
+      },
+      clearSchema: async () => {},
+      clearAllSchemas: async () => {
+        schemasListed = [];
+        return 1;
+      }
+    },
+    chrome: {
+      storage: {
+        sync: { get: async () => ({ contextText: 'Hydrated fast', providerOrder: ['groq'] }) },
+        local: { get: async () => ({ domainPreset: 'cs', autoSubmitEnabled: true }) }
+      }
+    }
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, 'settings.js'), 'utf8'), sandbox);
+
+  const bootPromise = Promise.all((domListeners.DOMContentLoaded || []).map((fn) => fn()));
+  await Promise.race([cacheStarted, bootPromise]);
+  assert.equal(byId.get('contextText').value, 'Hydrated fast', 'contextText must hydrate before ModelRegistry cache finishes');
+  assert.equal(byId.get('domainPreset').value, 'cs', 'domainPreset must hydrate before ModelRegistry cache finishes');
+  assert.equal(byId.get('autoSubmitEnabled').checked, true, 'autoSubmitEnabled must hydrate before ModelRegistry cache finishes');
+
+  resolveCacheGate();
+  await bootPromise;
+
+  const callsBeforeClear = listCalls;
+  await sandbox.SafeExmSettings.handleClearAllSchemas();
+  assert.equal(listCalls, callsBeforeClear + 1, 'handleClearAllSchemas must await loadSchemas()');
+  assert.ok(byId.get('schemaList').textContent.includes('Aucun site en cache'), 'schemaList must already be updated when handleClearAllSchemas resolves');
+});
+
+test('BUG-LIVE-07: popup.js showError clears and hides stale progressPercentage and showProgress restores it', () => {
+  const doc = makeDoc();
+  doc.addEventListener = () => {};
+  const progressSection = makeElement('DIV', { id: 'progressSection' });
+  const progressBarFill = makeElement('PROGRESS', { id: 'progressBarFill' });
+  const progressText = makeElement('SPAN', { id: 'progressText' });
+  const progressPercentage = makeElement('SPAN', { id: 'progressPercentage' });
+  doc.body.appendChild(progressSection);
+  doc.body.appendChild(progressBarFill);
+  doc.body.appendChild(progressText);
+  doc.body.appendChild(progressPercentage);
+
+  const sandbox = {
+    document: doc,
+    window: null,
+    chrome: {
+      runtime: { lastError: null, onMessage: { addListener() {} }, sendMessage: (_m, cb) => cb && cb({ success: true, stats: {} }) },
+      storage: { sync: { get: async () => ({}) }, local: { get: async () => ({}) } },
+      tabs: { query: async () => [] }
+    },
+    console, setTimeout, clearTimeout, Promise, Array, Object, Number, Boolean, String, Math, Date, Error
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(fs.readFileSync(path.join(TARGET_ROOT, 'popup.js'), 'utf8'), sandbox);
+
+  sandbox.SafeExmPopup.showProgress('Préparation…', 12);
+  assert.equal(progressPercentage.textContent, '12%');
+  assert.equal(progressPercentage.hidden, false);
+
+  sandbox.SafeExmPopup.showError('Aucune question trouvée');
+  assert.equal(progressPercentage.textContent, '', 'showError must clear stale percentage text');
+  assert.equal(progressPercentage.hidden, true, 'showError must hide progressPercentage');
+
+  sandbox.SafeExmPopup.showProgress('Reprise…', 50);
+  assert.equal(progressPercentage.textContent, '50%');
+  assert.equal(progressPercentage.hidden, false);
+});
+
+test('BUG-LIVE-08: loader.js hasInteractiveContent pierces nested open Shadow DOM and guards against cycles', () => {
+  const { hasInteractiveContent } = require(path.join(TARGET_ROOT, 'loader.js'));
+
+  // 1. Nested open Shadow DOM (outerHost -> innerHost -> radios) with non-quiz URL
+  const shadowRadio1 = makeElement('INPUT', { type: 'radio', name: 'sq' });
+  const shadowRadio2 = makeElement('INPUT', { type: 'radio', name: 'sq' });
+  const innerHost = makeElement('SHADOW-INNER');
+  innerHost.shadowRoot = makeElement('SHADOW-ROOT', {}, [shadowRadio1, shadowRadio2]);
+  const outerHost = makeElement('SHADOW-OUTER');
+  outerHost.shadowRoot = makeElement('SHADOW-ROOT', {}, [innerHost]);
+  const docShadow = makeDoc();
+  docShadow.body.appendChild(outerHost);
+  assert.equal(hasInteractiveContent(docShadow, 'https://lms.example.com/lesson/42'), true, 'Must detect >=2 QCM inputs inside nested open Shadow DOM');
+
+  // 2. Non-quiz static article -> negative control remains false
+  const docPlain = makeDoc();
+  docPlain.body.appendChild(makeElement('ARTICLE', {}, [makeElement('P', {}, ['History of cartography'])]));
+  assert.equal(hasInteractiveContent(docPlain, 'https://lms.example.com/article/1'), false);
+
+  // 3. Cyclic Shadow DOM mock -> terminates cleanly without throwing
+  const cyclicA = makeElement('DIV');
+  const cyclicRoot = makeElement('SHADOW-ROOT', {}, [cyclicA]);
+  cyclicA.shadowRoot = cyclicRoot;
+  const docCyclic = makeDoc();
+  docCyclic.body.appendChild(cyclicA);
+  assert.equal(hasInteractiveContent(docCyclic, 'https://lms.example.com/article/2'), false);
+});
+
+test('BUG-LIVE-09: _buildVerificationPrompt specifies answer tags and _parseAIResponse normalizes unknown type via question metadata', () => {
+  const { crossValidateAnswers, _parseAIResponse } = require(path.join(TARGET_ROOT, 'background-agent.js'));
+
+  // 1. Verify _buildVerificationPrompt generates explicit XML tag rules when crossValidateAnswers invokes callLLM
+  const q = {
+    index: 1,
+    type: 'radio',
+    questionType: 'single_choice',
+    text: 'Capital of France?',
+    options: [{ index: 0, text: 'Lyon' }, { index: 1, text: 'Paris' }]
+  };
+  let capturedSystemPrompt = '';
+  const initial = [{ questionIndex: 0, optionIndices: [1], confidence: 60, explanation: 'Paris' }];
+
+  return crossValidateAnswers(initial, [q], {
+    primaryProvider: 'fcc_local',
+    secondaryProvider: 'anthropic_compatible',
+    threshold: 90,
+    callLLM: async (_p, _cfg, _m, history) => {
+      capturedSystemPrompt = history.system || '';
+      return {
+        text: '<quiz_answers><answer question_id="1" type="radio"><option_index>2</option_index><confidence>98</confidence><explanation>Paris is capital</explanation></answer></quiz_answers>'
+      };
+    }
+  }).then((res) => {
+    assert.ok(capturedSystemPrompt.includes('<option_index>'), 'Verification prompt must instruct <option_index>');
+    assert.ok(capturedSystemPrompt.includes('<option_indices>'), 'Verification prompt must instruct <option_indices>');
+    assert.ok(capturedSystemPrompt.includes('<text_reply>'), 'Verification prompt must instruct <text_reply>');
+    assert.equal(res[0].crossValidated, true);
+    assert.equal(res[0].crossValidationStatus, 'confirmed');
+
+    // 2. Fallback normalization when model still emits unknown type="single" or type="Choix unique"
+    const parsedSingle = _parseAIResponse(
+      '<quiz_answers><answer question_id="1" type="single"><option_index>2</option_index><confidence>95</confidence></answer></quiz_answers>',
+      [q]
+    );
+    assert.deepEqual(parsedSingle[0].optionIndices, [1]);
+
+    const parsedFr = _parseAIResponse(
+      '<quiz_answers><answer question_id="1" type="Choix unique"><option_index>2</option_index><confidence>90</confidence></answer></quiz_answers>',
+      [q]
+    );
+    assert.deepEqual(parsedFr[0].optionIndices, [1]);
+  });
+});

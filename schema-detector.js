@@ -466,7 +466,7 @@ RÈGLES CRITIQUES:
         [],           // No images
         syncConfig,   // API keys
         order,        // Priority
-        {},           // No model overrides
+        (syncConfig.customModels && typeof syncConfig.customModels === 'object') ? syncConfig.customModels : {},
         { maxTokens: 2048, temperature: 0.1 }  // Basse température pour Json strict
       );
 
