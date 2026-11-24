@@ -336,3 +336,21 @@
   - **ESLint (`eslint .`)** : `exit 0` (`ESLINT_OK`, `0` erreur, `0` warning).
   - **Quality Gate (`pre-commit`)** : `7/7` vérifications passées en portée `full` et à la validation du commit.
 -[Antigravity-app, unknown, unknown]
+
+### Run: Step 1 (`F-UX-01`) Side Panel MV3, `zeroTraceMode`, Panic Sync, `x-goog-api-key` & Rédaction des secrets (`974daa2`)
+- **Date**: 2026-11-24
+- **Target**: `manifest.json`, `background.js`, `background-agent.js`, `providers.js`, `schema-detector.js`, `popup.html`, `popup.js`, `content.js`, `sidepanel.html`, `sidepanel.css`, `sidepanel.js`, `tests/sidepanel.test.js`
+- **Status**: PASS
+- **Output / Evidence**:
+  - **ESLint (`/home/omni/.nvm/versions/node/v26.2.0/bin/eslint .`)** : `exit 0` (`0` erreur).
+  - **Suite complète (`node --test --test-isolation=none tests/*.test.js`)** : `tests 170 | pass 170 | fail 0 | skipped 0`.
+  - **Exécutions séquentielles ciblées** : `tests/sidepanel.test.js` (`15/15`), `tests/providers-retry.test.js` (`14/14`), `tests/providers-models.test.js` (`7/7`), `tests/nlp-cleaner.test.js` (`24/24`), `tests/e2e-regressions.test.js --test-isolation=none` (`22/22`).
+  - **Limite runner parallèle (`bash .githooks/_common/run-tests.sh` sur hôte 2 cœurs)** : `168/170 PASS` ; échecs ponctuels de timing O(N) sur `tests/nlp-cleaner.test.js:377,397` sous contention CPU parallèle (9 fichiers simultanés ; `24/24 PASS` en séquentiel).
+  - **Quality Gate (`bash .githooks/pre-commit` staged + `QUALITY_GATE_SCOPE=full bash .githooks/pre-commit`)** : `7/7 ✅` (`exit 0`, incluant `gitleaks`, bannissement de suppressions, `node --check` + `manifest.json`, Semgrep `.semgrep/rules.yml`, `tests/invariants.test.js`).
+  - **Commit local** : `[master 974daa2] feat(sidepanel): add MV3 side panel, zero-trace mode, and panic sync` (`12 files changed, 6422 insertions(+), 192 deletions(-)`).
+  - **Audits indépendants `antibug-reviewer` (contexte frais sur `git diff --cached`)** :
+    - Passe `3068585a-b70b-41ba-abee-1f42cf55b21e` : 2 findings (`BackgroundAgent.solve()` fuite clé/URL sur échec + flake `< 50ms` `tests/sidepanel.test.js:275`) → corrigés (`x-goog-api-key`, `_sanitizeErrorMessage`, timestamp broadcast Panic + Pass 9).
+    - Passe `3a4fcfb3-7463-4f6a-b0ea-21e9e45507d5` : 3 findings (`providers.js` `?key=` & logs + `schema-detector.js:509`, `content.js` ACK `toggleAutoMode`, `analyzeBtn` Panic & garde `uiSeq`) → corrigés (+ Pass 10).
+    - Passe `301e4c0a-3703-45cf-a359-5709ae279366` : 4 findings (`callProvider`/`ProviderAnalytics`/`_proxyFetchViaRuntime`/`ModelRegistry`, `handleFetchImage`/`handleFetchLLM`/`handleRuntimeMessage`, auto-écho différé `sidePanelPanicClear` avant Run 2, sur-rédaction placeholders locaux `ollama`/`freecc`) → corrigés (+ `clearId` + `_lastAnalyzeStartedAt` + `NON_SECRET_PLACEHOLDERS` + Pass 11).
+    - Passe finale (`05cab5bb-4218-40cd-aab2-60c961e1595b`) : `AUDIT PASSED: Zero bugs, vulnerabilities, or regressions identified across the analyzed scope.`
+-[Antigravity-app, unknown, unknown]
