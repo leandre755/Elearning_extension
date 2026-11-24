@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Panneau latéral — Safe Exm</title>
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+
+<body>
+  <div class="sp-shell">
+    <header class="sp-header">
+      <div class="sp-brand">
+        <img src="icons/icon48.png" alt="Safe Exm" class="sp-logo" width="22" height="22">
+        <span class="sp-title">Safe Exm</span>
+        <span class="sp-badge-tag">Panneau</span>
+      </div>
+      <div class="sp-header-actions">
+        <button type="button" id="sidePanelThemeBtn" class="icon-btn" title="Basculer papier / ardoise" aria-label="Changer le thème">
+          <svg class="theme-icon-dark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg class="theme-icon-light" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="sp-controls" aria-label="Commandes d'analyse">
+      <div class="sp-actions-row">
+        <button type="button" id="sidePanelAnalyzeBtn" class="btn-primary">Analyser la page</button>
+        <button type="button" id="sidePanelClearBtn" class="btn-secondary" title="Effacer le panneau et les marques (Ctrl+Shift+E)">Effacer</button>
+      </div>
+
+      <label class="toggle-row" for="zeroTraceToggle">
+        <input type="checkbox" id="zeroTraceToggle">
+        <span class="toggle-custom" aria-hidden="true"></span>
+        <span class="toggle-copy">
+          <span class="toggle-title">Lecture zéro-trace</span>
+          <span class="toggle-hint">Affiche les réponses uniquement ici sans modifier le DOM du quiz.</span>
+        </span>
+      </label>
+
+      <div class="sp-progress-section" id="sidePanelProgressSection" hidden>
+        <div class="sp-progress-info">
+          <span class="sp-progress-text" id="sidePanelProgressText">Analyse en cours…</span>
+          <span class="sp-progress-pct" id="sidePanelProgressPercentage">0%</span>
+        </div>
+        <progress id="sidePanelProgress" class="progress-bar" value="0" max="100" aria-labelledby="sidePanelProgressText"></progress>
+      </div>
+
+      <span id="sidePanelAnnouncer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></span>
+    </section>
+
+    <section class="sp-meta-bar" id="sidePanelMeta" hidden aria-label="Résumé de la session"></section>
+
+    <main class="sp-main">
+      <div id="sidePanelEmpty" class="sp-empty">
+        <p class="sp-empty-title">Aucune réponse active</p>
+        <p class="sp-empty-desc">Lancez une analyse depuis ce panneau ou via le popup. Activez « Lecture zéro-trace » pour garder la page du quiz intacte. <code>Ctrl+Shift+E</code> efface tout instantanément.</p>
+      </div>
+      <div id="sidePanelResults" class="sp-results" hidden></div>
+    </main>
+
+    <footer class="sp-footer">
+      <a href="settings.html#dashboard" target="_blank" id="sidePanelDashboardLink" class="sp-footer-link">
+        <span>Tableau de bord</span>
+        <span aria-hidden="true">→</span>
+      </a>
+      <a href="settings.html" target="_blank" id="sidePanelSettingsLink" class="sp-footer-link">
+        <span>Paramètres</span>
+        <span aria-hidden="true">→</span>
+      </a>
+    </footer>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+
+</html>

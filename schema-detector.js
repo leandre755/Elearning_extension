@@ -506,7 +506,17 @@ RÈGLES CRITIQUES:
       return schemaMap;
 
     } catch (error) {
-      console.error('❌ SchemaDetector: Erreur lors de la découverte:', error.message);
+      const qpRef = (typeof window !== 'undefined' && window.QuizProviders)
+        ? window.QuizProviders
+        : (typeof globalThis !== 'undefined' ? globalThis.QuizProviders : null);
+      const rawMsg = (error && typeof error.message === 'string') ? error.message : String(error || 'Erreur inconnue');
+      const safeErrMsg = (qpRef && typeof qpRef.sanitizeErrorMessage === 'function')
+        ? qpRef.sanitizeErrorMessage(error)
+        : rawMsg
+            .replace(/https?:\/\/[^\s"'<>\\]+/gi, '[url]')
+            .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
+            .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,}|xai-[A-Za-z0-9\-_]{10,}|hf_[A-Za-z0-9\-_]{10,}|ghp_[A-Za-z0-9\-_]{10,})\b/g, '***');
+      console.error('❌ SchemaDetector: Erreur lors de la découverte:', safeErrMsg);
       return null;
     }
   }

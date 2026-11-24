@@ -8,8 +8,12 @@
     "storage",
     "scripting",
     "notifications",
-    "contextMenus"
+    "contextMenus",
+    "sidePanel"
   ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "host_permissions": [
     "<all_urls>",
     "http://localhost/*",

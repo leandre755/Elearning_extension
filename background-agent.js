@@ -137,8 +137,114 @@ const BackgroundAgent = (() => {
   // ─── Cache System Prompt ───
   let _cachedSystemPrompt = null;
 
+  function _redactUrlForText(urlStr) {
+    try {
+      const parsed = new URL(urlStr);
+      parsed.username = '';
+      parsed.password = '';
+      parsed.hash = '';
+      const sensitiveParamRe = /key|token|secret|auth|passw|credential|signature|sig/i;
+      for (const name of Array.from(parsed.searchParams.keys())) {
+        if (sensitiveParamRe.test(name)) {
+          parsed.searchParams.set(name, '***');
+        }
+      }
+      return parsed.toString();
+    } catch (_) {
+      return String(urlStr || '').replace(/([?&][^=&#]*?(?:key|token|secret|auth|passw|credential|sig)[^=&#]*=)[^&#]*/gi, '$1***');
+    }
+  }
+
+  const NON_SECRET_LOCAL_PLACEHOLDERS = new Set([
+    'ollama', 'lm-studio', 'llamacpp', 'freecc', 'local'
+  ]);
+
+  function _collectRedactionStrings(input, depth = 0, out = []) {
+    if (!input || depth > 3 || out.length >= 80) {
+      return out;
+    }
+    if (typeof input === 'string') {
+      const trimmed = input.trim();
+      if (trimmed.length >= 4 && !NON_SECRET_LOCAL_PLACEHOLDERS.has(trimmed.toLowerCase()) && !out.includes(trimmed)) {
+        out.push(trimmed);
+      }
+      return out;
+    }
+    if (Array.isArray(input) || typeof input !== 'object') {
+      return out;
+    }
+    const entries = Object.entries(input);
+    for (let i = 0; i < entries.length && out.length < 80; i++) {
+      const field = entries[i][0];
+      const val = entries[i][1];
+      if (!field || field === 'contextFiles' || field === 'questions' || field === 'journal' ||
+          field === 'answers' || field === 'customModels' || field === 'providerOrder' ||
+          field === 'domainPreset' || field === 'customDomainRules' ||
+          field === 'selectedProvider' || field === 'language' || field === 'theme' || field === 'model') {
+        continue;
+      }
+      if (val && typeof val === 'object') {
+        _collectRedactionStrings(val, depth + 1, out);
+        continue;
+      }
+      if (typeof val === 'string' && /(?:apikey|secret|token|password|credential|serpapi)/i.test(field)) {
+        const trimmed = val.trim();
+        if (trimmed.length >= 4 && !NON_SECRET_LOCAL_PLACEHOLDERS.has(trimmed.toLowerCase()) && !out.includes(trimmed)) {
+          out.push(trimmed);
+        }
+      }
+    }
+    return out;
+  }
+
+  function _sanitizeErrorMessage(rawError, redactionInput = null) {
+    let raw = '';
+    if (typeof rawError === 'string') {
+      raw = rawError;
+    } else if (rawError && typeof rawError.message === 'string') {
+      raw = rawError.message;
+    } else if (rawError !== undefined && rawError !== null) {
+      raw = String(rawError);
+    }
+    if (!raw) return 'Erreur inconnue';
+
+    let cleaned = raw
+      .replace(/https?:\/\/[^\s"'<>\\]+/gi, (match) => _redactUrlForText(match))
+      .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
+      .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,}|xai-[A-Za-z0-9\-_]{10,}|hf_[A-Za-z0-9\-_]{10,}|ghp_[A-Za-z0-9\-_]{10,})\b/g, '***')
+      .replace(/(\\"?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\"?\s*[:=]\s*\\")[^"]*\\"/gi, '$1***\\"')
+      .replace(/(\\'?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\'?\s*[:=]\s*\\')[^']*\\'/gi, "$1***\\'")
+      .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b["']?\s*[:=]\s*)(["'])(?:(?!\2)[^\\]|\\.)*\2/gi, '$1$2***$2')
+      .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential)\b["']?\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?[^\s&,;}"'\\\]]+/gi, '$1***')
+      .replace(/(\bkey\s*=\s*)[^\s&,;}"'\\\]]+/gi, '$1***');
+
+    const allRedactValues = Array.from(new Set(_collectRedactionStrings(redactionInput)))
+      .sort((a, b) => b.length - a.length);
+    for (let i = 0; i < allRedactValues.length; i++) {
+      const val = allRedactValues[i];
+      if (cleaned.includes(val)) {
+        cleaned = cleaned.split(val).join('***');
+      }
+    }
+    return cleaned;
+  }
+
+  function _createSanitizedError(rawError, redactionInput = null) {
+    const safeMsg = _sanitizeErrorMessage(rawError, redactionInput);
+    const wrapped = new Error(safeMsg);
+    if (rawError && typeof rawError === 'object') {
+      if (typeof rawError.status === 'number') {
+        wrapped.status = rawError.status;
+      }
+      if (typeof rawError.name === 'string' && rawError.name && rawError.name !== 'Error') {
+        wrapped.name = rawError.name;
+      }
+    }
+    return wrapped;
+  }
+
   /**
-   * Sanitise une chaîne en texte brut sans balises HTML ni espaces superflus.
+   * Sanitise une chaîne en texte brut sans balises HTML ni espaces superflus ni secrets d'URL.
    * @param {*} text
    * @param {number} maxLen
    * @returns {string}
@@ -147,17 +253,19 @@ const BackgroundAgent = (() => {
     if (typeof text !== 'string') {
       return '';
     }
-    const stripped = text
-      .replace(/<[^>]*>/g, ' ')
+    const bounded = text.slice(0, Math.max(maxLen * 4, 4096));
+    const stripped = bounded
+      .replace(/<!--[\s\S]*?-->|<\/[a-zA-Z][a-zA-Z0-9:-]{0,30}\s*>|<[a-zA-Z][a-zA-Z0-9:-]{0,30}(?:\s+(?:[a-zA-Z_:][a-zA-Z0-9_.:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>`]+)|disabled|checked|selected|readonly|required|multiple|hidden|open|async|defer|autofocus|controls|autoplay|loop|muted|novalidate|formnovalidate|nomodule|inert|default|reversed|ismap|data-[a-zA-Z0-9_-]+))*\s*\/?>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     if (!stripped) {
       return '';
     }
-    if (maxLen > 3 && stripped.length > maxLen) {
-      return stripped.slice(0, maxLen - 3).trimEnd() + '...';
+    const safe = stripped.replace(/https?:\/\/[^\s"'<>\\]+/gi, (m) => _redactUrlForText(m));
+    if (maxLen > 3 && safe.length > maxLen) {
+      return safe.slice(0, maxLen - 3).trimEnd() + '...';
     }
-    return stripped.slice(0, maxLen);
+    return safe.slice(0, maxLen);
   }
 
   /**
@@ -1091,7 +1199,7 @@ const BackgroundAgent = (() => {
             });
           }
         } catch (err) {
-          if (journal) _log(journal, 'cross_val_err', `Erreur cross-validation Q${primaryAns.questionIndex + 1}: ${err.message}`);
+          if (journal) _log(journal, 'cross_val_err', `Erreur cross-validation Q${primaryAns.questionIndex + 1}: ${_sanitizeErrorMessage(err, mergedConfig)}`);
         }
       }
     } finally {
@@ -1304,7 +1412,10 @@ const BackgroundAgent = (() => {
         journal
       };
     } catch (e) {
-      _log(journal, 'fast_path_err', `Erreur Fast Path: ${e.message}. Escalade vers l'Agent Path.`);
+      if (signal && signal.aborted) {
+        throw _createSanitizedError(e, task && task.config);
+      }
+      _log(journal, 'fast_path_err', `Erreur Fast Path: ${_sanitizeErrorMessage(e, task && task.config)}. Escalade vers l'Agent Path.`);
       return null;
     }
   }
@@ -1318,9 +1429,10 @@ const BackgroundAgent = (() => {
    * Reçoit une tâche complète et retourne les réponses via boucle ReAct.
    *
    * @param {Object} task
+   * @param {Object} [options]
    * @returns {Promise<Object>}
    */
-  async function solve(task) {
+  async function solve(task, options = {}) {
     if (!task || typeof task !== 'object') {
       throw new Error('BackgroundAgent.solve: task doit être un objet.');
     }
@@ -1334,13 +1446,30 @@ const BackgroundAgent = (() => {
     const journal = [];
     const startTime = Date.now();
 
-    // AbortController global avec timeout maximal
+    // AbortController global avec timeout maximal + signal externe (Panic / fermeture de port)
     const globalAbort = new AbortController();
+    const externalSignal = (options && options.signal) || (task && task.signal) || null;
+    const onExternalAbort = () => globalAbort.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        globalAbort.abort();
+      } else if (typeof externalSignal.addEventListener === 'function') {
+        externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
     const globalTimer = setTimeout(() => globalAbort.abort(), MAX_TOTAL_TIMEOUT_MS);
+    const report = (step, percent) => {
+      if (!globalAbort.signal.aborted) {
+        _reportProgress(task.tabId, step, percent, task.startedAt || startTime);
+      }
+    };
 
     try {
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
       _log(journal, 'agent_start', `Agent démarré pour ${task.questions.length} question(s)`);
-      _reportProgress(task.tabId, 'Analyse démarrée…', 15);
+      report('Analyse démarrée…', 15);
 
       const settings = task.config.settings || {};
       const effectiveSyncConfig = { ...(task.config.syncConfig || {}) };
@@ -1396,13 +1525,19 @@ const BackgroundAgent = (() => {
       const complexityScore = _computeComplexityScore(effectiveTask);
       _log(journal, 'routing_eval', `Score de complexité calculé: ${complexityScore} (Seuil Fast <= 3)`);
 
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
       if (complexityScore <= 3) {
-        _reportProgress(task.tabId, 'Analyse rapide…', 18);
+        report('Analyse rapide…', 18);
         const fastResult = await _solveFastPath(effectiveTask, journal, globalAbort.signal);
+        if (globalAbort.signal.aborted) {
+          throw new Error('Résolution annulée');
+        }
         if (fastResult) {
           let finalFastAnswers = (fastResult.answers || []).map(normalizeAnswerEntry);
           if (crossValidationEnabled && !globalAbort.signal.aborted) {
-            _reportProgress(task.tabId, 'Double vérification…', 90);
+            report('Double vérification…', 90);
             const { textFiles: fastTextFiles, imageFiles: fastContextImages } = _extractContextMedia(effectiveSyncConfig.contextFiles);
             const fastContextText = _buildCombinedContextText(effectiveSyncConfig.contextText || '', fastTextFiles);
             finalFastAnswers = await crossValidateAnswers(finalFastAnswers, task.questions, {
@@ -1414,6 +1549,9 @@ const BackgroundAgent = (() => {
               signal: globalAbort.signal
             });
           }
+          if (globalAbort.signal.aborted) {
+            throw new Error('Résolution annulée');
+          }
           fastResult.answers = finalFastAnswers.map(normalizeAnswerEntry);
           fastResult.metadata.answersFound = fastResult.answers.length;
           fastResult.metadata.crossValidatedCount = fastResult.answers.filter(a => a.crossValidated).length;
@@ -1423,11 +1561,17 @@ const BackgroundAgent = (() => {
         _log(journal, 'routing_fallback', 'Fast Path rejeté ou échoué. Basculement vers l\'Agent Path.');
       }
 
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
       _log(journal, 'routing_agent', 'Démarrage de l\'Agent Path complet (ReAct loop)...');
 
       // ─── Phase 1 : Planning ───
       const plan = await _planStrategy(effectiveTask, journal, globalAbort.signal);
-      _reportProgress(task.tabId, 'Découpage des questions…', 20);
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
+      report('Découpage des questions…', 20);
 
       // Contexte de base : texte brut + texte combiné pour cross-validation
       const rawContextText = plan.rawContextText !== undefined ? plan.rawContextText : plan.baseContextText;
@@ -1448,7 +1592,7 @@ const BackgroundAgent = (() => {
 
         const chunk = plan.chunks[i];
         const progressPercent = Math.min(75, 25 + Math.round((i / plan.chunks.length) * 50));
-        _reportProgress(task.tabId, `Lot ${i + 1}/${plan.chunks.length}…`, progressPercent);
+        report(`Lot ${i + 1}/${plan.chunks.length}…`, progressPercent);
 
         _log(journal, 'llm_chunk', `Traitement Chunk ${i + 1}/${plan.chunks.length}: ${chunk.questions.length} questions`);
 
@@ -1483,10 +1627,10 @@ const BackgroundAgent = (() => {
             lastError = null;
             break;
           } catch (err) {
-            _log(journal, 'llm_chunk_fail', `Échec du provider "${pKey}" pour le chunk ${i + 1}: ${err.message}`);
-            lastError = err;
+            _log(journal, 'llm_chunk_fail', `Échec du provider "${pKey}" pour le chunk ${i + 1}: ${_sanitizeErrorMessage(err, effectiveConfig)}`);
+            lastError = _createSanitizedError(err, effectiveConfig);
             if (globalAbort.signal.aborted) {
-              throw err;
+              throw lastError;
             }
           }
         }
@@ -1513,6 +1657,10 @@ const BackgroundAgent = (() => {
       // Nettoyer les éléments vides/undefined du tableau answers
       const cleanedAnswers = allParsedAnswers.filter(ans => ans !== undefined);
 
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
+
       // ─── Phase 4 : Validation (Ralph Loop) ───
       const validated = await _validateAndRetry(
         effectiveTask,
@@ -1522,10 +1670,13 @@ const BackgroundAgent = (() => {
         journal,
         globalAbort.signal
       );
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
 
       let finalAnswers = (validated.answers || []).map(normalizeAnswerEntry);
       if (crossValidationEnabled && !globalAbort.signal.aborted) {
-        _reportProgress(task.tabId, 'Double vérification…', 90);
+        report('Double vérification…', 90);
         finalAnswers = await crossValidateAnswers(finalAnswers, task.questions, {
           primaryProvider: providerKey,
           config: effectiveConfig,
@@ -1535,9 +1686,12 @@ const BackgroundAgent = (() => {
           signal: globalAbort.signal
         });
       }
+      if (globalAbort.signal.aborted) {
+        throw new Error('Résolution annulée');
+      }
       finalAnswers = finalAnswers.map(normalizeAnswerEntry);
 
-      _reportProgress(task.tabId, 'Analyse terminée', 95);
+      report('Analyse terminée', 95);
 
       const result = {
         success: true,
@@ -1560,9 +1714,12 @@ const BackgroundAgent = (() => {
       return result;
 
     } catch (error) {
-      _log(journal, 'agent_fatal', `Erreur fatale: ${error.message}`);
+      const wasAborted = globalAbort.signal.aborted;
+      const safeFatalMessage = _sanitizeErrorMessage(error, task && task.config);
+      _log(journal, 'agent_fatal', `Erreur fatale: ${safeFatalMessage}`);
       return {
         success: false,
+        cancelled: wasAborted,
         answers: [],
         metadata: {
           provider: '',
@@ -1575,10 +1732,13 @@ const BackgroundAgent = (() => {
           totalDurationMs: Date.now() - startTime
         },
         journal,
-        error: error.message
+        error: safeFatalMessage
       };
     } finally {
       clearTimeout(globalTimer);
+      if (externalSignal && typeof externalSignal.removeEventListener === 'function') {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
       try {
         const qp = typeof QuizProviders !== 'undefined' ? QuizProviders : (typeof globalThis !== 'undefined' ? globalThis.QuizProviders : null);
         const analytics = qp && qp.ProviderAnalytics ? qp.ProviderAnalytics : null;
@@ -1870,7 +2030,7 @@ const BackgroundAgent = (() => {
               answers = _mapToolAnswersToParsedAnswers(args.answers, chunk.questions);
             }
           } catch (err) {
-            _log(journal, 'react_tool_err', `Erreur de parsing des arguments de submit_answers: ${err.message}`);
+            _log(journal, 'react_tool_err', `Erreur de parsing des arguments de submit_answers: ${_sanitizeErrorMessage(err)}`);
           }
         } else if (call.name === 'web_search') {
           searchCount++;
@@ -2186,7 +2346,7 @@ const BackgroundAgent = (() => {
         }
       }
     } catch (e) {
-      _log(journal, 'compact_err', `Échec de la micro-compaction de l'historique : ${e.message}`);
+      _log(journal, 'compact_err', `Échec de la micro-compaction de l'historique : ${_sanitizeErrorMessage(e)}`);
     }
     return history;
   }
@@ -2245,20 +2405,28 @@ const BackgroundAgent = (() => {
         }
         return { ...result, model: candidateModel };
       } catch (err) {
-        console.error(`❌ Échec du modèle ${candidateModel} sur ${normalizedKey}:`, err.message);
+        const isStaticLocalPlaceholder = (provider && provider.local === true && apiKey === (provider.staticApiKey || 'local')) ||
+          NON_SECRET_LOCAL_PLACEHOLDERS.has(String(apiKey || '').trim().toLowerCase());
+        const redactScope = {
+          ...(apiKeys && typeof apiKeys === 'object' ? apiKeys : {}),
+          ...(!isStaticLocalPlaceholder && typeof apiKey === 'string' ? { apiKey } : {})
+        };
+        const safeErrObj = _createSanitizedError(err, redactScope);
+        const safeErrText = safeErrObj.message;
+        console.error(`❌ Échec du modèle ${candidateModel} sur ${normalizedKey}:`, safeErrText);
         if (analytics && typeof analytics.record === 'function' && !(signal && signal.aborted)) {
           analytics.record({
             provider: normalizedKey,
             model: candidateModel,
             ok: false,
             latencyMs: Date.now() - startedAt,
-            status: err && typeof err.status === 'number' ? err.status : undefined,
-            error: err
+            status: safeErrObj && typeof safeErrObj.status === 'number' ? safeErrObj.status : undefined,
+            error: safeErrObj
           });
         }
-        lastError = err;
+        lastError = safeErrObj;
         if (signal && signal.aborted) {
-          throw err;
+          throw safeErrObj;
         }
       }
     }
@@ -2513,11 +2681,11 @@ const BackgroundAgent = (() => {
       };
     }
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const response = await QuizProviders.extensionFetch(apiUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(payload),
       signal
     });
@@ -2691,7 +2859,7 @@ const BackgroundAgent = (() => {
       }
       return content;
     } catch (e) {
-      return `Échec de la recherche web: ${e.message}`;
+      return `Échec de la recherche web: ${_sanitizeErrorMessage(e, apiKey)}`;
     } finally {
       if (searchTimer !== null) {
         clearTimeout(searchTimer);
@@ -2729,7 +2897,9 @@ const BackgroundAgent = (() => {
 
       retriesUsed++;
       _log(journal, 'ralph_retry', `Ralph Loop: ${missingQuestions.length} questions manquantes, retry ${retriesUsed}/${MAX_RETRIES}`);
-      _reportProgress(task.tabId, `Vérification de ${missingQuestions.length} question(s) (${retriesUsed}/${MAX_RETRIES})…`, 85);
+      if (!signal || !signal.aborted) {
+        _reportProgress(task.tabId, `Vérification de ${missingQuestions.length} question(s) (${retriesUsed}/${MAX_RETRIES})…`, 85, task.startedAt);
+      }
 
       const missingQuestionImages = [];
       for (const q of missingQuestions) {
@@ -2751,12 +2921,18 @@ const BackgroundAgent = (() => {
         let lastError = null;
 
         for (const pKey of attemptProviders) {
+          if (signal && signal.aborted) {
+            throw new Error('Résolution annulée');
+          }
           try {
             const initialPrompts = await _buildPrompt(retryQuizData, rawContextText, contextFiles, {
               ...(syncConfig || {}),
               ...(task.config.settings || {}),
               isRetry: true
             });
+            if (signal && signal.aborted) {
+              throw new Error('Résolution annulée');
+            }
             const messages = _initHistory(pKey, initialPrompts.system, initialPrompts.user);
 
             const retryImages = _mergeRequestImages(contextImages, uniqueMissingQuestionImages);
@@ -2776,13 +2952,16 @@ const BackgroundAgent = (() => {
             
             break; // Succès
           } catch (e) {
-            _log(journal, 'ralph_provider_error', `Erreur retry avec ${pKey}: ${e.message}`);
-            lastError = e;
+            if (signal && signal.aborted) {
+              throw _createSanitizedError(e, task && task.config);
+            }
+            _log(journal, 'ralph_provider_error', `Erreur retry avec ${pKey}: ${_sanitizeErrorMessage(e, task && task.config)}`);
+            lastError = _createSanitizedError(e, task && task.config);
           }
         }
 
         if (!response) {
-          throw new Error(`Tous les providers ont échoué en retry. Dernière erreur: ${lastError ? lastError.message : 'inconnue'}`);
+          throw new Error(`Tous les providers ont échoué en retry. Dernière erreur: ${lastError ? _sanitizeErrorMessage(lastError, task && task.config) : 'inconnue'}`);
         }
 
         if (response.model) {
@@ -2799,7 +2978,7 @@ const BackgroundAgent = (() => {
 
         missingQuestions = task.questions.filter((q, pos) => !answerByQIdx.has(getQIdx(q, pos)));
       } catch (retryError) {
-        _log(journal, 'ralph_fail', `Retry ${retriesUsed} échoué: ${retryError.message}`);
+        _log(journal, 'ralph_fail', `Retry ${retriesUsed} échoué: ${_sanitizeErrorMessage(retryError, task && task.config)}`);
         break;
       }
     }
@@ -3365,15 +3544,19 @@ const BackgroundAgent = (() => {
     console.log(`🤖 [Agent/${type}] ${message}`);
   }
 
-  function _reportProgress(tabId, step, percent) {
+  function _reportProgress(tabId, step, percent, startedAt = null) {
     if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
       return;
     }
-    Promise.resolve(chrome.runtime.sendMessage({
+    const msg = {
       action: 'analysisProgress',
       step,
       percent
-    })).catch(() => {});
+    };
+    if (typeof startedAt === 'number' && Number.isFinite(startedAt)) {
+      msg.startedAt = startedAt;
+    }
+    Promise.resolve(chrome.runtime.sendMessage(msg)).catch(() => {});
   }
 
   // ────────────────────────────────────────────────
@@ -3479,13 +3662,14 @@ const BackgroundAgent = (() => {
           return { success: true, lesson };
         }
       } catch (e) {
-        console.warn(`⚠️ learnFromFeedback: échec avec ${provider.name}: ${e.message}`);
-        lastError = e;
+        console.warn(`⚠️ learnFromFeedback: échec avec ${provider.name}: ${_sanitizeErrorMessage(e, mergedConfig)}`);
+        lastError = _createSanitizedError(e, mergedConfig);
       }
     }
 
-    console.error("Erreur lors de la réflexion sur le feedback:", lastError);
-    return { success: false, error: lastError ? lastError.message : 'Tous les providers ont échoué' };
+    const safeFeedbackError = lastError ? _sanitizeErrorMessage(lastError, mergedConfig) : 'Tous les providers ont échoué';
+    console.error("Erreur lors de la réflexion sur le feedback:", safeFeedbackError);
+    return { success: false, error: safeFeedbackError };
   }
 
   return {

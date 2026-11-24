@@ -33,9 +33,59 @@ const elements = {
   providerStatsList: typeof document !== 'undefined' ? document.getElementById('providerStatsList') : null,
   providerStatsEmpty: typeof document !== 'undefined' ? document.getElementById('providerStatsEmpty') : null,
   resetStatsBtn: typeof document !== 'undefined' ? document.getElementById('resetStatsBtn') : null,
+  openSidePanelBtn: typeof document !== 'undefined' ? document.getElementById('openSidePanelBtn') : null,
   themeToggleBtn: typeof document !== 'undefined' ? document.getElementById('themeToggleBtn') : null,
   popupAnnouncer: typeof document !== 'undefined' ? document.getElementById('popupAnnouncer') : null
 };
+
+let _cachedWindowId = null;
+
+async function cacheCurrentWindowId() {
+  if (typeof chrome === 'undefined') return null;
+  try {
+    if (chrome.windows && typeof chrome.windows.getCurrent === 'function') {
+      const win = await chrome.windows.getCurrent();
+      if (win && typeof win.id === 'number') {
+        _cachedWindowId = win.id;
+        return _cachedWindowId;
+      }
+    }
+    if (chrome.tabs && typeof chrome.tabs.query === 'function') {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && typeof tab.windowId === 'number') {
+        _cachedWindowId = tab.windowId;
+        return _cachedWindowId;
+      }
+    }
+  } catch { /* ignore window lookup failure */ }
+  return null;
+}
+
+async function openSidePanel() {
+  if (typeof chrome === 'undefined' || !chrome.sidePanel || typeof chrome.sidePanel.open !== 'function') {
+    return false;
+  }
+  try {
+    if (typeof _cachedWindowId === 'number') {
+      // Appel synchrone avant tout await pour préserver le geste utilisateur MV3
+      const openPromise = chrome.sidePanel.open({ windowId: _cachedWindowId });
+      await openPromise;
+    } else if (chrome.tabs && typeof chrome.tabs.query === 'function') {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || typeof tab.windowId !== 'number') return false;
+      await chrome.sidePanel.open({ windowId: tab.windowId });
+    } else {
+      return false;
+    }
+    if (typeof window !== 'undefined' && typeof window.close === 'function') {
+      window.close();
+    }
+    return true;
+  } catch (err) {
+    showError(err?.message || 'Impossible d\'ouvrir le panneau latéral.');
+    return false;
+  }
+}
 
 const PROVIDER_DISPLAY_NAMES = Object.freeze({
   groq: 'Groq',
@@ -99,8 +149,7 @@ async function initTheme() {
 // Initialisation
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('DOMContentLoaded', async () => {
-    await initTheme();
-    await loadSettings();
+    await Promise.all([initTheme(), loadSettings(), cacheCurrentWindowId()]);
     setupEventListeners();
     checkApiConnection();
     checkSchemaStatus();
@@ -131,7 +180,14 @@ function setupEventListeners() {
     elements.extensionToggle.addEventListener('change', async (e) => {
       state.enabled = e.target.checked;
       await saveSettings();
-      notifyContentScript({ action: 'toggleExtension', enabled: state.enabled });
+      if (!state.enabled) {
+        await dispatchLocalClear(
+          'disabled',
+          notifyContentScript({ action: 'toggleExtension', enabled: false, skipSidePanelClear: true })
+        );
+      } else {
+        await notifyContentScript({ action: 'toggleExtension', enabled: true });
+      }
     });
   }
 
@@ -168,6 +224,11 @@ function setupEventListeners() {
     });
   }
 
+  // Bouton Panneau latéral
+  if (elements.openSidePanelBtn) {
+    elements.openSidePanelBtn.addEventListener('click', openSidePanel);
+  }
+
   // Bascule thème Papier / Ardoise (avec retour au thème système)
   if (elements.themeToggleBtn) {
     elements.themeToggleBtn.addEventListener('click', async () => {
@@ -185,10 +246,49 @@ function setupEventListeners() {
     });
   }
 
-  // Écouter les messages de progression depuis content.js
+  // Écouter les messages de progression et d'effacement Panic
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
-      if (message && message.action === 'analysisProgress') {
+      if (!message || typeof message !== 'object') return;
+      if (message.action === 'sidePanelPanicClear') {
+        if (typeof message.clearId === 'string') {
+          const ownIdx = _ownClearIds.indexOf(message.clearId);
+          if (ownIdx >= 0) {
+            _ownClearIds.splice(ownIdx, 1);
+            return;
+          }
+        }
+        if (typeof message.clearedAt === 'number' && Number.isFinite(message.clearedAt) &&
+            _lastAnalyzeStartedAt > 0 && message.clearedAt < _lastAnalyzeStartedAt) {
+          return;
+        }
+        _popupAnalyzeSeq += 1;
+        _popupPanicEpoch += 1;
+        _suppressProgressUntilStart = true;
+        _lastPanicClearedAt = (typeof message.clearedAt === 'number' && Number.isFinite(message.clearedAt))
+          ? message.clearedAt
+          : Date.now();
+        clearProgressHideTimer();
+        resetAnalyzeButton();
+        setElementVisibility(elements.progressSection, false, 'flex');
+      } else if (message.action === 'analysisProgress') {
+        const msgStartedAt = (typeof message.startedAt === 'number' && Number.isFinite(message.startedAt))
+          ? message.startedAt
+          : null;
+        if (_lastPanicClearedAt > 0 && msgStartedAt !== null && msgStartedAt < _lastPanicClearedAt) {
+          return;
+        }
+        if (_suppressProgressUntilStart) {
+          if (msgStartedAt === null || msgStartedAt <= _lastPanicClearedAt) {
+            return;
+          }
+          _suppressProgressUntilStart = false;
+        }
+        if (message.hide === true) {
+          clearProgressHideTimer();
+          setElementVisibility(elements.progressSection, false, 'flex');
+          return;
+        }
         showProgress(message.step, message.percent);
       }
     });
@@ -207,6 +307,15 @@ async function saveSettings() {
 }
 
 let _progressHideTimer = null;
+let _popupAnalyzeSeq = 0;
+let _popupUiAnalyzeSeq = 0;
+let _popupPanicEpoch = 0;
+let _suppressProgressUntilStart = false;
+let _lastPanicClearedAt = 0;
+let _lastAnalyzeStartedAt = 0;
+let _localClearSeq = 0;
+const _ownClearIds = [];
+let _pendingClearPromise = null;
 
 function clearProgressHideTimer() {
   if (_progressHideTimer !== null) {
@@ -267,6 +376,15 @@ function showProgress(stepMessage, percent) {
       elements.progressPercentage.classList.remove('is-error');
     }
     elements.progressPercentage.textContent = `${clampedPercent}%`;
+  }
+  if (clampedPercent >= 100) {
+    _progressHideTimer = setTimeout(() => {
+      _progressHideTimer = null;
+      setElementVisibility(elements.progressSection, false, 'flex');
+    }, 2500);
+    if (_progressHideTimer && typeof _progressHideTimer.unref === 'function') {
+      _progressHideTimer.unref();
+    }
   }
 }
 
@@ -532,10 +650,23 @@ function setAnalyzeButtonLabel(label) {
   }
 }
 
+function resetAnalyzeButton() {
+  if (elements.analyzeBtn) {
+    elements.analyzeBtn.disabled = false;
+    setAnalyzeButtonLabel('Analyser la page');
+  }
+}
+
 // Analyser le quiz
 async function analyzeQuiz() {
+  const runSeq = ++_popupAnalyzeSeq;
+  const uiSeq = ++_popupUiAnalyzeSeq;
+  const startPanicEpoch = _popupPanicEpoch;
+  _lastAnalyzeStartedAt = Date.now();
+  _suppressProgressUntilStart = false;
   clearProgressHideTimer();
   state.hasError = false;
+  let wasCancelled = false;
   setElementVisibility(elements.progressSection, true, 'flex');
   if (elements.analyzeBtn) {
     elements.analyzeBtn.disabled = true;
@@ -544,19 +675,43 @@ async function analyzeQuiz() {
   showProgress('Préparation…', 5);
 
   try {
+    if (_pendingClearPromise) {
+      let waitTimer = null;
+      await Promise.race([
+        _pendingClearPromise,
+        new Promise((resolve) => {
+          waitTimer = setTimeout(resolve, 500);
+          if (waitTimer && typeof waitTimer.unref === 'function') waitTimer.unref();
+        })
+      ]);
+      if (waitTimer !== null) clearTimeout(waitTimer);
+      if (runSeq !== _popupAnalyzeSeq) {
+        wasCancelled = true;
+        return;
+      }
+    }
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (runSeq !== _popupAnalyzeSeq) {
+      wasCancelled = true;
+      return;
+    }
 
     if (!tab) {
       throw new Error('Aucun onglet actif trouvé');
     }
 
+    let resp;
     try {
-      await sendMessageToTab(tab.id, {
+      resp = await sendMessageToTab(tab.id, {
         action: 'analyzeQuiz',
         settings: state,
         forceFallback: true
       });
     } catch (err) {
+      if (runSeq !== _popupAnalyzeSeq || (err && err.cancelled === true)) {
+        wasCancelled = true;
+        return;
+      }
       if (!err || !err.isMissingReceiver) {
         throw err;
       }
@@ -569,28 +724,47 @@ async function analyzeQuiz() {
           files: [file]
         });
       }
+      if (runSeq !== _popupAnalyzeSeq) {
+        wasCancelled = true;
+        return;
+      }
 
       await new Promise(resolve => setTimeout(resolve, 500));
+      if (runSeq !== _popupAnalyzeSeq) {
+        wasCancelled = true;
+        return;
+      }
       showProgress('Lecture du quiz…', 25);
 
-      await sendMessageToTab(tab.id, {
+      resp = await sendMessageToTab(tab.id, {
         action: 'analyzeQuiz',
         settings: state,
         forceFallback: true
       });
     }
+
+    if ((resp && resp.cancelled === true) || runSeq !== _popupAnalyzeSeq) {
+      wasCancelled = true;
+      return;
+    }
   } catch (error) {
+    if (runSeq !== _popupAnalyzeSeq || (error && error.cancelled === true)) {
+      wasCancelled = true;
+      return;
+    }
     showError(error.message);
     state.hasError = true;
   } finally {
-    if (elements.analyzeBtn) {
-      elements.analyzeBtn.disabled = false;
-      setAnalyzeButtonLabel('Analyser la page');
+    if (uiSeq === _popupUiAnalyzeSeq) {
+      resetAnalyzeButton();
     }
 
     await loadProviderStats();
 
-    if (!state.hasError) {
+    if ((wasCancelled || startPanicEpoch !== _popupPanicEpoch) && uiSeq === _popupUiAnalyzeSeq) {
+      clearProgressHideTimer();
+      setElementVisibility(elements.progressSection, false, 'flex');
+    } else if (!state.hasError && !wasCancelled && runSeq === _popupAnalyzeSeq && startPanicEpoch === _popupPanicEpoch) {
       clearProgressHideTimer();
       _progressHideTimer = setTimeout(() => {
         _progressHideTimer = null;
@@ -602,6 +776,7 @@ async function analyzeQuiz() {
 
 // Wrapper de message vers l'onglet
 function sendMessageToTab(tabId, message) {
+  const startSeq = _popupAnalyzeSeq;
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, (response) => {
       if (chrome.runtime.lastError) {
@@ -609,6 +784,11 @@ function sendMessageToTab(tabId, message) {
         const err = new Error(msg);
         err.isMissingReceiver = /receiving end does not exist|could not establish connection/i.test(msg);
         reject(err);
+        return;
+      }
+
+      if ((response && response.cancelled === true) || startSeq !== _popupAnalyzeSeq || _suppressProgressUntilStart) {
+        resolve({ success: false, cancelled: true });
         return;
       }
 
@@ -664,26 +844,145 @@ function showError(message) {
 }
 
 // Effacer les surlignages
-async function clearHighlights() {
-  clearProgressHideTimer();
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab) {
-    try {
-      await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
-    } catch { /* ignore if receiver missing */ }
+async function dispatchLocalClear(reason, tabActionPromise) {
+  _popupAnalyzeSeq += 1;
+  _popupPanicEpoch += 1;
+  _suppressProgressUntilStart = true;
+  _lastPanicClearedAt = Date.now();
+  const clearId = `popup-${Date.now()}-${++_localClearSeq}`;
+  _ownClearIds.push(clearId);
+  if (_ownClearIds.length > 32) {
+    _ownClearIds.shift();
   }
+  clearProgressHideTimer();
+  resetAnalyzeButton();
   setElementVisibility(elements.progressSection, false, 'flex');
+  const clearOp = Promise.allSettled([
+    sendRuntimeMessageSafe({ action: 'clearSidePanelState', reason, clearId }),
+    tabActionPromise || Promise.resolve(null)
+  ]);
+  _pendingClearPromise = clearOp;
+  try {
+    await clearOp;
+  } finally {
+    if (_pendingClearPromise === clearOp) {
+      _pendingClearPromise = null;
+    }
+  }
+}
+
+async function clearHighlights() {
+  await dispatchLocalClear(
+    'popup-clear',
+    notifyContentScript({ action: 'clearHighlights', skipSidePanelClear: true })
+  );
   announcePopupStatus('Surlignages effacés');
 }
 
-// Notifier le content script
-async function notifyContentScript(message) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab) {
-    try {
-      await chrome.tabs.sendMessage(tab.id, message);
-    } catch { /* ignore if receiver missing */ }
+function sendRuntimeMessageSafe(payload, timeoutMs = 250) {
+  if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+    return Promise.resolve(null);
   }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timerId = null;
+    const finish = (resp) => {
+      if (settled) return;
+      settled = true;
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      resolve(resp ?? null);
+    };
+    timerId = setTimeout(() => finish(null), timeoutMs);
+    if (timerId && typeof timerId.unref === 'function') {
+      timerId.unref();
+    }
+    try {
+      const maybePromise = chrome.runtime.sendMessage(payload, (resp) => {
+        void chrome.runtime?.lastError;
+        finish(resp ?? null);
+      });
+      if (maybePromise && typeof maybePromise === 'object' && typeof maybePromise.finally === 'function') {
+        void (async () => {
+          try {
+            const val = await maybePromise;
+            finish(val ?? null);
+          } catch {
+            finish(null);
+          }
+        })();
+      }
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+function sendTabMessageSafe(tabId, message, timeoutMs = 250) {
+  if (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.sendMessage !== 'function') {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timerId = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      resolve();
+    };
+    timerId = setTimeout(finish, timeoutMs);
+    if (timerId && typeof timerId.unref === 'function') {
+      timerId.unref();
+    }
+    try {
+      const maybePromise = chrome.tabs.sendMessage(tabId, message, () => {
+        void chrome.runtime?.lastError;
+        finish();
+      });
+      if (maybePromise && typeof maybePromise === 'object' && typeof maybePromise.finally === 'function') {
+        void (async () => {
+          try {
+            await maybePromise;
+          } catch { /* ignore */ }
+          finish();
+        })();
+      }
+    } catch {
+      finish();
+    }
+  });
+}
+
+// Notifier tous les onglets HTTP (et repli onglet actif si nécessaire)
+async function notifyContentScript(message) {
+  if (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function') return;
+  let targetTabs = [];
+  try {
+    const allTabs = await chrome.tabs.query({});
+    if (Array.isArray(allTabs) && allTabs.length > 0) {
+      targetTabs = allTabs.filter((tab) => (
+        tab && typeof tab.id === 'number' &&
+        (tab.url === undefined || /^https?:\/\//i.test(String(tab.url)))
+      ));
+    }
+    if (targetTabs.length === 0) {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (activeTab && typeof activeTab.id === 'number' &&
+          (activeTab.url === undefined || /^https?:\/\//i.test(String(activeTab.url)))) {
+        targetTabs = [activeTab];
+      }
+    }
+  } catch {
+    targetTabs = [];
+  }
+  if (targetTabs.length === 0) return;
+  await Promise.allSettled(targetTabs.map((tab) => sendTabMessageSafe(tab.id, message)));
 }
 
 // Vérifier le schéma du site actif
@@ -790,7 +1089,9 @@ const PopupAPI = {
   checkApiConnection,
   loadSettings,
   checkSchemaStatus,
-  rediscoverSchema
+  rediscoverSchema,
+  openSidePanel,
+  clearHighlights
 };
 
 if (typeof window !== 'undefined') {

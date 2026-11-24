@@ -1,5 +1,5 @@
 // content.js - Safe Exm Orchestrator & Parser (CRIT-01, CRIT-03, F-AUTO-02, F-AUTO-03)
-/* global ConfigCache, SchemaDetector, SchemaCache, DOMExtractor, Number, Boolean, Array, RegExp */
+/* global ConfigCache, SchemaDetector, SchemaCache, DOMExtractor, Number, Boolean, Array, RegExp, URL */
 (function () {
   'use strict';
 
@@ -54,6 +54,8 @@
 
   // Tracking des questions déjà analysées pour le delta Auto Mode
   const _analyzedQuestionTexts = new Set();
+  // Etat cumulé Side Panel (fusion Auto Mode delta des éléments connectés)
+  let _sidePanelMergedEntries = [];
   // Feedback tracking
   let _feedbackSent = false;
 
@@ -130,7 +132,8 @@
     'autoSubmitEnabled',
     'autoSubmitMinConfidence',
     'autoSubmitDelayMs',
-    'passiveNetworkIntercept'
+    'passiveNetworkIntercept',
+    'zeroTraceMode'
   ];
 
   async function bootstrapConfig() {
@@ -275,13 +278,72 @@
     console.log('🤖 Auto Mode: Observateur arrêté.');
   }
 
+  function notifyClearSidePanelState(reason = 'panic') {
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      try {
+        Promise.resolve(chrome.runtime.sendMessage({
+          action: 'clearSidePanelState',
+          reason: typeof reason === 'string' ? reason : 'panic'
+        }, () => {
+          void chrome.runtime?.lastError;
+        })).catch(() => {});
+      } catch { /* ignore */ }
+    }
+  }
+
+  function sendRuntimeMessageGuaranteed(payload, timeoutMs = 250) {
+    if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      let timerId = null;
+      const finish = (resp) => {
+        if (settled) return;
+        settled = true;
+        if (timerId !== null) {
+          clearTimeout(timerId);
+          timerId = null;
+        }
+        resolve(resp ?? null);
+      };
+      timerId = setTimeout(() => finish(null), timeoutMs);
+      if (timerId && typeof timerId.unref === 'function') {
+        timerId.unref();
+      }
+      try {
+        const maybePromise = chrome.runtime.sendMessage(payload, (resp) => {
+          void chrome.runtime?.lastError;
+          finish(resp ?? null);
+        });
+        if (maybePromise && typeof maybePromise === 'object' && typeof maybePromise.finally === 'function') {
+          void (async () => {
+            try {
+              const val = await maybePromise;
+              finish(val ?? null);
+            } catch {
+              finish(null);
+            }
+          })();
+        }
+      } catch {
+        finish(null);
+      }
+    });
+  }
+
   // Listen to configuration change to toggle Auto Mode, Panic abort & opt-in network bridge
-  function setExtensionEnabled(nextEnabled) {
+  function setExtensionEnabled(nextEnabled, options = {}) {
+    const skipSidePanelClear = Boolean(options && options.skipSidePanelClear === true);
     _hasExplicitEnabledState = true;
     isEnabled = Boolean(nextEnabled);
     if (!isEnabled) {
       cancelOngoingAnalyses();
       cancelPendingAutoSubmit();
+      _sidePanelMergedEntries = [];
+      if (!skipSidePanelClear) {
+        notifyClearSidePanelState('disabled');
+      }
       syncPassiveNetworkInterceptor(false).catch(() => {});
       if (rootWin.SafeExm.HighlightManager) {
         rootWin.SafeExm.HighlightManager.clearAllHighlights();
@@ -306,7 +368,13 @@
         syncPassiveNetworkInterceptor(changes.passiveNetworkIntercept.newValue === true).catch(() => {});
       }
       if (changes.enabled) {
-        setExtensionEnabled(changes.enabled.newValue === true);
+        setExtensionEnabled(changes.enabled.newValue === true, { skipSidePanelClear: true });
+      }
+      if (changes.zeroTraceMode && changes.zeroTraceMode.newValue === true) {
+        cancelPendingAutoSubmit();
+        if (rootWin.SafeExm.HighlightManager && typeof rootWin.SafeExm.HighlightManager.clearAllHighlights === 'function') {
+          rootWin.SafeExm.HighlightManager.clearAllHighlights();
+        }
       }
     });
   }
@@ -417,10 +485,22 @@
 
       switch (safeAction) {
         case 'toggleExtension':
-          setExtensionEnabled(message.enabled);
+          setExtensionEnabled(message.enabled, { skipSidePanelClear: Boolean(message && message.skipSidePanelClear === true) });
           console.log('🔄 Extension:', isEnabled ? 'activée' : 'désactivée');
           sendResponse({ success: true });
           break;
+
+        case 'toggleAutoMode': {
+          const nextAutoMode = Boolean(message && message.autoMode === true);
+          _hasExplicitAutoModeState = true;
+          if (nextAutoMode && isExtensionEnabled()) {
+            setupAutoModeObserver();
+          } else {
+            clearAutoModeObserver();
+          }
+          sendResponse({ success: true, autoMode: nextAutoMode });
+          break;
+        }
 
         case 'analyzeQuiz':
           console.log('🔍 Début analyse quiz...');
@@ -436,12 +516,21 @@
           })();
           return true;
 
-        case 'clearHighlights':
-          cancelOngoingAnalyses();
+        case 'clearHighlights': {
+          const preserveSidePanel = Boolean(message && message.preserveSidePanel === true);
+          const skipSidePanelClear = Boolean(message && message.skipSidePanelClear === true);
           cancelPendingAutoSubmit();
+          if (!preserveSidePanel) {
+            cancelOngoingAnalyses();
+            _sidePanelMergedEntries = [];
+            if (!skipSidePanelClear) {
+              notifyClearSidePanelState('panic');
+            }
+          }
           rootWin.SafeExm.HighlightManager.clearAllHighlights();
           sendResponse({ success: true });
           break;
+        }
 
         case 'discoverSchema':
           console.log('🔬 Découverte de schéma manuelle...');
@@ -995,6 +1084,104 @@
     return { syncConfig: { ...localExtra, ...syncConfig }, effective };
   }
 
+  function buildSidePanelSnapshot(questions, answers, meta, zeroTraceMode) {
+    const qList = Array.isArray(questions) ? questions : [];
+    const aList = Array.isArray(answers) ? answers : [];
+    const answerByIdx = new Map();
+    for (const ans of aList) {
+      if (ans && typeof ans.questionIndex === 'number') {
+        answerByIdx.set(ans.questionIndex, ans);
+      }
+    }
+
+    const items = qList.map((q, pos) => {
+      const logicalIdx = (q && typeof q.index === 'number') ? q.index - 1 : pos;
+      const ans = answerByIdx.get(logicalIdx) || answerByIdx.get(pos) || null;
+      const optionObjects = Array.isArray(q?.options) && q.options.length > 0
+        ? q.options
+        : (Array.isArray(q?.selects) && q.selects.length === 1 && Array.isArray(q.selects[0]?.options)
+          ? q.selects[0].options
+          : (Array.isArray(q?.draggables) ? q.draggables : []));
+      const options = optionObjects
+        .map((opt) => (opt && typeof opt.text === 'string' ? opt.text.trim() : ''));
+
+      const optionIndices = Array.isArray(ans?.optionIndices) ? ans.optionIndices : [];
+      const selectedLabels = optionIndices
+        .map((optIdx) => {
+          const letter = optIdx >= 0 && optIdx < 26 ? String.fromCharCode(65 + optIdx) : String(optIdx + 1);
+          const optText = options[optIdx];
+          return optText ? `${letter}. ${optText}` : `Option ${optIdx + 1}`;
+        })
+        .filter(Boolean);
+
+      const textAnswer = (ans && ans.textAnswer !== undefined && ans.textAnswer !== null && String(ans.textAnswer).trim())
+        ? String(ans.textAnswer).trim()
+        : null;
+      const answerSummary = selectedLabels.length > 0 && textAnswer
+        ? `${selectedLabels.join(' | ')} — ${textAnswer}`
+        : (selectedLabels.length > 0 ? selectedLabels.join(' | ') : (textAnswer || (ans?.raw ? String(ans.raw).trim() : '')));
+
+      const rawConf = (ans && typeof ans.confidence === 'number' && Number.isFinite(ans.confidence))
+        ? Math.max(0, Math.min(100, Math.round(ans.confidence)))
+        : 75;
+      const tier = rawConf >= 80 ? 'high' : (rawConf >= 50 ? 'medium' : 'low');
+
+      return {
+        index: pos,
+        text: q && typeof q.text === 'string' ? q.text.trim() : '',
+        questionType: (q && (q.questionType || q.type)) || 'unknown',
+        options,
+        optionIndices,
+        textAnswer,
+        answerSummary,
+        confidence: rawConf,
+        confidenceTier: (ans && typeof ans.confidenceTier === 'string' && ['high', 'medium', 'low'].includes(ans.confidenceTier))
+          ? ans.confidenceTier
+          : tier,
+        explanation: ans && typeof ans.explanation === 'string' ? ans.explanation.trim() : '',
+        crossValidated: Boolean(ans && ans.crossValidated),
+        crossValidationStatus: (ans && typeof ans.crossValidationStatus === 'string') ? ans.crossValidationStatus : 'unverified',
+        crossValidationNote: ans && typeof ans.crossValidationNote === 'string' ? ans.crossValidationNote.trim() : ''
+      };
+    });
+
+    const loc = (typeof window !== 'undefined' && window.location) ? window.location : {};
+    const docTitle = (typeof document !== 'undefined' && document && typeof document.title === 'string') ? document.title : '';
+    return {
+      updatedAt: Date.now(),
+      hostname: typeof loc.hostname === 'string' ? loc.hostname : '',
+      pageTitle: docTitle,
+      zeroTraceMode: Boolean(zeroTraceMode),
+      metadata: {
+        provider: meta && meta.provider ? String(meta.provider) : '',
+        model: meta && meta.model ? String(meta.model) : '',
+        questionsTotal: (meta && meta.questionsTotal) ?? qList.length,
+        answersFound: (meta && meta.answersFound) ?? aList.length,
+        totalDurationMs: (meta && meta.totalDurationMs) ?? 0
+      },
+      items
+    };
+  }
+
+  async function readLiveZeroTraceMode(fallbackValue) {
+    let result = Boolean(fallbackValue);
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local &&
+          typeof chrome.storage.local.get === 'function') {
+        const freshLocal = await chrome.storage.local.get(['zeroTraceMode']);
+        if (freshLocal && typeof freshLocal.zeroTraceMode === 'boolean') {
+          result = freshLocal.zeroTraceMode === true;
+        }
+      } else if (typeof ConfigCache !== 'undefined' && ConfigCache && typeof ConfigCache.get === 'function') {
+        const cachedZt = ConfigCache.get('zeroTraceMode');
+        if (typeof cachedZt === 'boolean') {
+          result = cachedZt === true;
+        }
+      }
+    } catch { /* keep fallbackValue */ }
+    return result;
+  }
+
   function makeCancelledResult() {
     return { success: false, cancelled: true, error: 'Analyse annulée' };
   }
@@ -1008,7 +1195,31 @@
     }
 
     const startClearGen = _clearGeneration;
+    const analysisStartedAt = Date.now();
     const isCancelled = () => startClearGen !== _clearGeneration;
+    let progressEmitted = false;
+    const emitProgress = (payload) => {
+      if (isCancelled() || !payload || typeof chrome === 'undefined' || !chrome.runtime ||
+          typeof chrome.runtime.sendMessage !== 'function') {
+        return;
+      }
+      if (!payload.hide) {
+        progressEmitted = true;
+      }
+      try {
+        Promise.resolve(chrome.runtime.sendMessage({
+          action: 'analysisProgress',
+          startedAt: analysisStartedAt,
+          ...payload
+        })).catch(() => {});
+      } catch { /* ignore */ }
+    };
+    const emitHideProgressIfActive = () => {
+      if (progressEmitted && !isCancelled()) {
+        progressEmitted = false;
+        emitProgress({ hide: true });
+      }
+    };
     const { syncConfig, effective: effectiveSettings } = await loadEffectiveSettings(settings);
     if (isCancelled()) return makeCancelledResult();
     const safeSummary = buildSafeSettingsSummary(effectiveSettings);
@@ -1021,11 +1232,12 @@
     }
     if (isCancelled()) return makeCancelledResult();
 
-    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-      Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Lecture du quiz…', percent: 10 })).catch(() => {});
+    if (!isAuto) {
+      emitProgress({ step: 'Lecture du quiz…', percent: 10 });
     }
 
     if (!rootWin.SafeExm.DOMExtractor || !rootWin.SafeExm.HighlightManager) {
+      emitHideProgressIfActive();
       throw new Error('Les modules SafeExm ne sont pas tous disponibles.');
     }
 
@@ -1047,8 +1259,8 @@
 
       if (isCancelled()) return makeCancelledResult();
       console.log('ℹ️ Aucune question trouvée. Tentative de découverte automatique du schéma...');
-      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Repérage de la page…', percent: 12 })).catch(() => {});
+      if (!isAuto) {
+        emitProgress({ step: 'Repérage de la page…', percent: 12 });
       }
       if (forceFallback || (typeof SchemaDetector !== 'undefined' && SchemaDetector && SchemaDetector.hasInteractiveContent())) {
         try {
@@ -1083,6 +1295,7 @@
     }
 
     if (!quizData || !Array.isArray(quizData.questions) || quizData.questions.length === 0) {
+      emitHideProgressIfActive();
       return { success: false, error: 'Aucune question trouvée sur cette page, même après analyse approfondie.' };
     }
 
@@ -1108,6 +1321,7 @@
       // ─── Construire la tâche pour le Background Agent ───
       const task = {
         questions: quizData.questions,
+        startedAt: analysisStartedAt,
         config: {
           syncConfig,
           apiKeys,
@@ -1126,9 +1340,7 @@
       };
 
       console.log(`🤖 Délégation au BackgroundAgent: ${quizData.questions.length} questions`);
-      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Analyse en cours…', percent: 15 })).catch(() => {});
-      }
+      emitProgress({ step: 'Analyse en cours…', percent: 15 });
 
       // ─── Appel asynchrone au Background Agent via port persistant ───
       const agentResult = await new Promise((resolve, reject) => {
@@ -1186,35 +1398,145 @@
       }
 
       if (!agentResult.success) {
-        console.error('❌ BackgroundAgent a échoué:', agentResult.error);
+        const redactErrorText = (rawText) => {
+          const txt = typeof rawText === 'string' ? rawText : String(rawText || '');
+          if (!txt) return '';
+          return txt
+            .replace(/https?:\/\/[^\s"'<>\\]+/gi, (m) => {
+              try {
+                const u = new URL(m);
+                u.username = '';
+                u.password = '';
+                u.hash = '';
+                for (const p of Array.from(u.searchParams.keys())) {
+                  if (/key|token|secret|auth|passw|credential|sig/i.test(p)) u.searchParams.set(p, '***');
+                }
+                return u.toString();
+              } catch (_) {
+                return m.replace(/([?&][^=&#]*?(?:key|token|secret|auth|passw|credential|sig)[^=&#]*=)[^&#]*/gi, '$1***');
+              }
+            })
+            .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
+            .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,}|xai-[A-Za-z0-9\-_]{10,}|hf_[A-Za-z0-9\-_]{10,}|ghp_[A-Za-z0-9\-_]{10,})\b/g, '***');
+        };
+        const safeAgentErr = redactErrorText(agentResult.error || 'L\'agent de résolution a échoué.');
+        console.error('❌ BackgroundAgent a échoué:', safeAgentErr);
         if (agentResult.journal && agentResult.journal.length > 0) {
           console.group('📋 Journal de l\'agent:');
           for (const entry of agentResult.journal) {
-            console.log(`  [${entry.type}] ${entry.message}`);
+            console.log(`  [${entry.type}] ${redactErrorText(entry.message)}`);
           }
           console.groupEnd();
         }
-        return { success: false, error: agentResult.error || 'L\'agent de résolution a échoué.' };
+        emitHideProgressIfActive();
+        return { success: false, error: safeAgentErr };
       }
 
       // ─── Application des résultats (reste dans le content script) ───
       const allParsedAnswers = agentResult.answers || [];
       const meta = agentResult.metadata || {};
-
-      console.log(`🔗 Agent terminé: ${meta.answersFound}/${meta.questionsTotal} réponses, provider=${meta.provider}, durée=${meta.totalDurationMs}ms`);
-      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Marquage des réponses…', percent: 90 })).catch(() => {});
+      let zeroTraceMode = await readLiveZeroTraceMode(effectiveSettings.zeroTraceMode === true);
+      if (isCancelled()) {
+        return makeCancelledResult();
       }
 
-      // Call HighlightManager API (preserve existing connected highlights in Auto Mode Delta)
-      const highlightStatus = await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
-        stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion,
-        showConfidenceBadge: effectiveSettings.showConfidenceBadge !== false,
-        append: Boolean(isAuto)
+      console.log(`🔗 Agent terminé: ${meta.answersFound}/${meta.questionsTotal} réponses, provider=${meta.provider}, durée=${meta.totalDurationMs}ms`);
+      emitProgress({
+        step: zeroTraceMode ? 'Synchronisation du panneau latéral…' : 'Marquage des réponses…',
+        percent: 90
       });
 
-      if (highlightStatus === 'CANCELLED' || isCancelled()) {
+      if (!zeroTraceMode) {
+        // Call HighlightManager API (preserve existing connected highlights in Auto Mode Delta)
+        const highlightStatus = await rootWin.SafeExm.HighlightManager.applyHighlights(quizData.questions, allParsedAnswers, {
+          stealthLevel: effectiveSettings.stealthLevel || effectiveSettings.highlightDiscretion,
+          showConfidenceBadge: effectiveSettings.showConfidenceBadge !== false,
+          append: Boolean(isAuto)
+        });
+
+        if (isCancelled()) {
+          return makeCancelledResult();
+        }
+        zeroTraceMode = await readLiveZeroTraceMode(zeroTraceMode);
+        if (isCancelled()) {
+          return makeCancelledResult();
+        }
+        if (zeroTraceMode) {
+          if (rootWin.SafeExm.HighlightManager && typeof rootWin.SafeExm.HighlightManager.clearAllHighlights === 'function') {
+            rootWin.SafeExm.HighlightManager.clearAllHighlights();
+          }
+        } else if (highlightStatus === 'CANCELLED') {
+          return makeCancelledResult();
+        }
+      } else if (isCancelled()) {
         return makeCancelledResult();
+      }
+
+      if (isCancelled()) {
+        return makeCancelledResult();
+      }
+
+      const batchAnswerByIdx = new Map();
+      for (const ans of allParsedAnswers) {
+        if (ans && typeof ans.questionIndex === 'number') {
+          batchAnswerByIdx.set(ans.questionIndex, ans);
+        }
+      }
+      const incomingEntries = quizData.questions.map((q, pos) => {
+        const logicalIdx = (q && typeof q.index === 'number') ? q.index - 1 : pos;
+        const ans = batchAnswerByIdx.get(logicalIdx) || batchAnswerByIdx.get(pos) || null;
+        return {
+          key: q && typeof q.text === 'string' ? q.text.trim() : '',
+          element: q && q.element ? q.element : null,
+          question: q,
+          answer: ans
+        };
+      });
+
+      if (isAuto) {
+        const incomingKeys = new Set(incomingEntries.map((entry) => entry.key).filter(Boolean));
+        const isConnectedFn = rootWin.SafeExm.HighlightManager && rootWin.SafeExm.HighlightManager.isElementConnected;
+        _sidePanelMergedEntries = _sidePanelMergedEntries
+          .filter((entry) => {
+            if (!entry || !entry.question) return false;
+            if (entry.key && incomingKeys.has(entry.key)) return false;
+            if (entry.element) {
+              return typeof isConnectedFn === 'function'
+                ? isConnectedFn(entry.element)
+                : entry.element.isConnected !== false;
+            }
+            return true;
+          })
+          .concat(incomingEntries);
+      } else {
+        _sidePanelMergedEntries = incomingEntries;
+      }
+
+      const snapshotQuestions = _sidePanelMergedEntries.map((entry, idx) => ({
+        ...entry.question,
+        index: idx + 1
+      }));
+      const snapshotAnswers = _sidePanelMergedEntries
+        .map((entry, idx) => (entry.answer ? { ...entry.answer, questionIndex: idx } : null))
+        .filter(Boolean);
+      const snapshotMeta = isAuto
+        ? {
+            ...meta,
+            questionsTotal: snapshotQuestions.length,
+            answersFound: snapshotAnswers.length
+          }
+        : meta;
+
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        const snapshot = buildSidePanelSnapshot(snapshotQuestions, snapshotAnswers, snapshotMeta, zeroTraceMode);
+        snapshot.analysisStartedAt = analysisStartedAt;
+        await sendRuntimeMessageGuaranteed({
+          action: 'saveSidePanelState',
+          state: snapshot
+        });
+        if (isCancelled()) {
+          return makeCancelledResult();
+        }
       }
 
       // Stocker les questions analysées pour le mode Auto (Delta)
@@ -1245,12 +1567,18 @@
       }
       console.log(`📋 ${pendingTextAnswers.length} réponse(s) texte en attente pour le collage via menu contextuel.`);
 
-      // F-AUTO-03 : Opt-In Auto-Submit Intelligence
-      const autoSubmitSchedule = scheduleAutoSubmit(quizData.questions, allParsedAnswers, effectiveSettings);
-
-      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        Promise.resolve(chrome.runtime.sendMessage({ action: 'analysisProgress', step: 'Terminé.', percent: 100 })).catch(() => {});
+      // Re-vérifier zeroTraceMode avant auto-submit (peut avoir été activé pendant saveSidePanelState)
+      zeroTraceMode = await readLiveZeroTraceMode(zeroTraceMode);
+      if (isCancelled()) {
+        return makeCancelledResult();
       }
+
+      // F-AUTO-03 : Opt-In Auto-Submit Intelligence (désactivé en mode lecture zéro-trace)
+      const autoSubmitSchedule = zeroTraceMode
+        ? { scheduled: false, reason: 'zero_trace' }
+        : scheduleAutoSubmit(quizData.questions, allParsedAnswers, effectiveSettings);
+
+      emitProgress({ step: 'Terminé.', percent: 100 });
 
       return {
         success: true,
@@ -1264,11 +1592,13 @@
           searchQueriesRun: meta.searchQueriesRun,
           retriesUsed: meta.retriesUsed,
           totalDurationMs: meta.totalDurationMs,
-          autoSubmitScheduled: autoSubmitSchedule.scheduled
+          autoSubmitScheduled: autoSubmitSchedule.scheduled,
+          zeroTraceMode
         }
       };
     } catch (error) {
       if (isCancelled()) return makeCancelledResult();
+      emitHideProgressIfActive();
       console.error('❌ Erreur globale d\'analyse:', error);
       return { success: false, error: error.message };
     }
@@ -1348,6 +1678,7 @@
     isPassiveNetworkInterceptorEnabled: () => _passiveBridgeEnabled,
     isQuizPage,
     buildSafeSettingsSummary,
+    buildSidePanelSnapshot,
     filterAndReindexDeltaQuestions,
     triggerPreWarmProviders,
     resetPreWarmState,
@@ -1365,6 +1696,7 @@
       isEnabled = Boolean(val);
       if (!isEnabled) {
         cancelPendingAutoSubmit();
+        _sidePanelMergedEntries = [];
         syncPassiveNetworkInterceptor(false).catch(() => {});
       }
     },

@@ -106,12 +106,16 @@ async function broadcastToActiveTabs(actionObject) {
 
 const MISSING_RECEIVER_RE = /receiving end does not exist|could not establish connection/i;
 const ANALYZE_RETRY_DELAYS_MS = [50, 100];
+let _panicClearEpoch = 0;
 
-async function sendMessageWithMissingReceiverRetry(tabId, payload) {
+async function sendMessageWithMissingReceiverRetry(tabId, payload, expectedPanicEpoch = _panicClearEpoch) {
   const totalAttempts = ANALYZE_RETRY_DELAYS_MS.length + 1;
   let lastErrorMessage = '';
 
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
+    if (expectedPanicEpoch !== _panicClearEpoch) {
+      return { ok: false, cancelled: true, error: 'Analyse annulée' };
+    }
     const result = await new Promise((resolve) => {
       chrome.tabs.sendMessage(tabId, payload, (response) => {
         if (chrome.runtime.lastError) {
@@ -125,6 +129,9 @@ async function sendMessageWithMissingReceiverRetry(tabId, payload) {
       });
     });
 
+    if (expectedPanicEpoch !== _panicClearEpoch) {
+      return { ok: false, cancelled: true, error: 'Analyse annulée' };
+    }
     if (result.ok) {
       return result;
     }
@@ -133,34 +140,57 @@ async function sendMessageWithMissingReceiverRetry(tabId, payload) {
       return result;
     }
     await new Promise((resolve) => setTimeout(resolve, ANALYZE_RETRY_DELAYS_MS[attempt]));
+    if (expectedPanicEpoch !== _panicClearEpoch) {
+      return { ok: false, cancelled: true, error: 'Analyse annulée' };
+    }
   }
 
   return { ok: false, error: lastErrorMessage };
 }
 
-async function sendAnalyzeQuizToTab(tabId, settings) {
+async function sendAnalyzeQuizToTab(tabId, settings, expectedPanicEpoch = _panicClearEpoch) {
+  if (expectedPanicEpoch !== _panicClearEpoch) {
+    return { ok: false, cancelled: true, error: 'Analyse annulée' };
+  }
   await injectCoreScripts(tabId);
+  if (expectedPanicEpoch !== _panicClearEpoch) {
+    return { ok: false, cancelled: true, error: 'Analyse annulée' };
+  }
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync &&
+        typeof chrome.storage.sync.get === 'function') {
+      const freshSync = await chrome.storage.sync.get(['enabled']);
+      if (expectedPanicEpoch !== _panicClearEpoch || (freshSync && freshSync.enabled === false)) {
+        return { ok: false, cancelled: true, error: 'Analyse annulée' };
+      }
+    }
+  } catch (_) { /* ignore sync re-check failure */ }
   return sendMessageWithMissingReceiverRetry(tabId, {
     action: 'analyzeQuiz',
     settings,
     forceFallback: true
-  });
+  }, expectedPanicEpoch);
 }
 
 async function handleAnalyzeQuizCommand() {
+  const startPanicEpoch = _panicClearEpoch;
   const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
-  if (!settings.enabled) {
-    showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
+  if (startPanicEpoch !== _panicClearEpoch || !settings.enabled) {
+    if (startPanicEpoch === _panicClearEpoch) {
+      showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
+    }
     return false;
   }
 
   let activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (startPanicEpoch !== _panicClearEpoch) return false;
   let httpTabs = Array.isArray(activeTabs)
     ? activeTabs.filter((t) => t && typeof t.id === 'number' && typeof t.url === 'string' && /^https?:\/\//i.test(t.url))
     : [];
 
   if (httpTabs.length === 0) {
     activeTabs = await chrome.tabs.query({ active: true });
+    if (startPanicEpoch !== _panicClearEpoch) return false;
     httpTabs = Array.isArray(activeTabs)
       ? activeTabs.filter((t) => t && typeof t.id === 'number' && typeof t.url === 'string' && /^https?:\/\//i.test(t.url))
       : [];
@@ -172,10 +202,17 @@ async function handleAnalyzeQuizCommand() {
   }
 
   let success = false;
+  let cancelled = false;
   for (const t of httpTabs) {
+    if (startPanicEpoch !== _panicClearEpoch) {
+      cancelled = true;
+      break;
+    }
     try {
-      const result = await sendAnalyzeQuizToTab(t.id, settings);
-      if (result.ok) {
+      const result = await sendAnalyzeQuizToTab(t.id, settings, startPanicEpoch);
+      if (result.cancelled) {
+        cancelled = true;
+      } else if (result.ok) {
         success = true;
       } else {
         console.warn(`[handleAnalyzeQuizCommand] Erreur d'envoi à l'onglet ${t.id}:`, result.error);
@@ -185,7 +222,7 @@ async function handleAnalyzeQuizCommand() {
     }
   }
 
-  if (!success) {
+  if (!success && !cancelled && startPanicEpoch === _panicClearEpoch) {
     showNotification("Impossible de trouver l'onglet actif pour analyser. Rechargez la page.");
   }
   return success;
@@ -209,9 +246,14 @@ if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onComman
         break;
 
       case 'clear-highlights': {
-        const clearSuccess = await broadcastToActiveTabs({ action: 'clearHighlights' });
+        const [, clearSuccess] = await Promise.all([
+          handleClearSidePanelState('panic'),
+          notifyHttpTabs({ action: 'clearHighlights', skipSidePanelClear: true })
+        ]);
         if (clearSuccess) {
           showNotification('Surlignages effacés');
+        } else {
+          showNotification('Panneau latéral effacé');
         }
         break;
       }
@@ -222,6 +264,76 @@ if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onComman
 // ──────────────────────────────────────────────
 // Toggle Extension
 // ──────────────────────────────────────────────
+
+async function sendTabMessageWithAck(tabId, payload) {
+  if (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.sendMessage !== 'function') {
+    return { delivered: false, response: null };
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timerId = null;
+    const finish = (delivered, response) => {
+      if (settled) return;
+      settled = true;
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      resolve({ delivered, response: response ?? null });
+    };
+    timerId = setTimeout(() => finish(false, null), 1000);
+    if (timerId && typeof timerId.unref === 'function') {
+      timerId.unref();
+    }
+    try {
+      const maybePromise = chrome.tabs.sendMessage(tabId, payload, (resp) => {
+        if (chrome.runtime && chrome.runtime.lastError) {
+          console.warn(`Impossible de notifier l'onglet ${tabId} :`, chrome.runtime.lastError.message);
+          finish(false, null);
+        } else {
+          finish(true, resp ?? null);
+        }
+      });
+      if (maybePromise && typeof maybePromise === 'object' && typeof maybePromise.finally === 'function') {
+        void (async () => {
+          try {
+            const val = await maybePromise;
+            finish(true, val ?? null);
+          } catch (err) {
+            console.warn(`Impossible de notifier l'onglet ${tabId} :`, err?.message || err);
+            finish(false, null);
+          }
+        })();
+      }
+    } catch (err) {
+      console.warn(`Impossible de notifier l'onglet ${tabId} :`, err?.message || err);
+      finish(false, null);
+    }
+  });
+}
+
+async function notifyHttpTabs(payload, fallbackTabId = null) {
+  if (!payload || typeof payload !== 'object' || typeof chrome === 'undefined' || !chrome.tabs) {
+    return false;
+  }
+  let targetTabs = [];
+  if (typeof chrome.tabs.query === 'function') {
+    const tabs = await chrome.tabs.query({});
+    targetTabs = Array.isArray(tabs)
+      ? tabs.filter((tab) => tab && typeof tab.id === 'number' && typeof tab.url === 'string' && /^https?:\/\//i.test(tab.url))
+      : [];
+  } else if (typeof fallbackTabId === 'number') {
+    targetTabs = [{ id: fallbackTabId }];
+  }
+  const targetIds = new Set(targetTabs.map((t) => t.id));
+  if (targetIds.size === 0) return false;
+  const results = await Promise.allSettled(
+    Array.from(targetIds).map((id) => sendTabMessageWithAck(id, payload))
+  );
+  return results.some((r) => r.status === 'fulfilled' && r.value && r.value.delivered);
+}
+
+let _handledSyncDisable = false;
 
 async function toggleExtension() {
   // Règle 8.5 : assertions de préconditions
@@ -234,20 +346,45 @@ async function toggleExtension() {
 
   const result = await chrome.storage.sync.get(['enabled']);
   const newState = !result.enabled;
+  _handledSyncDisable = !newState;
 
   await chrome.storage.sync.set({ enabled: newState });
 
-  const tabs = await chrome.tabs.query({});
-  tabs.forEach(tab => {
-    chrome.tabs.sendMessage(tab.id, {
+  if (!newState) {
+    await Promise.all([
+      handleClearSidePanelState('disabled'),
+      notifyHttpTabs({
+        action: 'toggleExtension',
+        enabled: false,
+        skipSidePanelClear: true
+      })
+    ]);
+  } else {
+    await notifyHttpTabs({
       action: 'toggleExtension',
-      enabled: newState
-    }).catch((err) => {
-      console.warn(`Impossible de notifier l'onglet ${tab.id} de la désactivation :`, err.message);
+      enabled: true
     });
-  });
+  }
 
   showNotification(newState ? 'Extension activée' : 'Extension désactivée');
+}
+
+if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged &&
+    typeof chrome.storage.onChanged.addListener === 'function') {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'sync' && changes &&
+        Object.prototype.hasOwnProperty.call(changes, 'enabled') && changes.enabled) {
+      if (changes.enabled.newValue === true) {
+        _handledSyncDisable = false;
+      } else if (changes.enabled.newValue === false && !_handledSyncDisable) {
+        _handledSyncDisable = true;
+        void Promise.all([
+          handleClearSidePanelState('disabled'),
+          notifyHttpTabs({ action: 'toggleExtension', enabled: false, skipSidePanelClear: true })
+        ]);
+      }
+    }
+  });
 }
 
 async function toggleAutoMode() {
@@ -262,16 +399,11 @@ async function toggleAutoMode() {
   const result = await chrome.storage.sync.get(['autoMode']);
   const newState = !result.autoMode;
   await chrome.storage.sync.set({ autoMode: newState });
-  
-  // Notifier tous les onglets du changement de mode automatique
-  const tabs = await chrome.tabs.query({});
-  tabs.forEach(tab => {
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'toggleAutoMode',
-      autoMode: newState
-    }).catch((err) => {
-      console.warn(`Impossible de notifier l'onglet ${tab.id} du mode automatique :`, err.message);
-    });
+
+  // Notifier tous les onglets HTTP du changement de mode automatique
+  await notifyHttpTabs({
+    action: 'toggleAutoMode',
+    autoMode: newState
   });
 
   showNotification(newState ? 'Mode Auto activé' : 'Mode Auto désactivé');
@@ -338,18 +470,24 @@ async function analyzeCurrentQuiz(tab) {
     throw new Error('L\'identifiant de l\'onglet (tab.id) doit être un nombre.');
   }
 
+  const startPanicEpoch = _panicClearEpoch;
   const settings = await chrome.storage.sync.get(['enabled', 'model', 'thinkingMode', 'thinkingDepth']);
+  if (startPanicEpoch !== _panicClearEpoch) return;
   if (!settings.enabled) {
     showNotification('Activez d\'abord l\'extension (Ctrl+Shift+1)');
     return;
   }
 
   try {
-    const result = await sendAnalyzeQuizToTab(tab.id, settings);
+    const result = await sendAnalyzeQuizToTab(tab.id, settings, startPanicEpoch);
+    if (result.cancelled || startPanicEpoch !== _panicClearEpoch) {
+      return;
+    }
     if (!result.ok) {
       throw new Error(result.error || 'Erreur de communication avec l\'onglet');
     }
   } catch (error) {
+    if (startPanicEpoch !== _panicClearEpoch) return;
     console.error(`[analyzeCurrentQuiz] Échec d'envoi du message d'analyse à l'onglet ${tab.id}:`, error);
     showNotification("Impossible d'analyser le quiz. Assurez-vous que la page est entièrement chargée.");
   }
@@ -442,23 +580,87 @@ function sanitizeErrorMessage(rawError, config) {
   let cleaned = raw
     .replace(/https?:\/\/[^\s"'<>\\]+/gi, (match) => sanitizeUrlForLog(match))
     .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
-    .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,})\b/g, '***')
-    .replace(/(\\"?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\"?\s*[:=]\s*\\")[^"]*\\"/gi, '$1***\\"')
-    .replace(/(\\'?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\'?\s*[:=]\s*\\')[^']*\\'/gi, "$1***\\'")
-    .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b["']?\s*[:=]\s*)(["'])(?:(?!\2)[^\\]|\\.)*\2/gi, '$1$2***$2')
-    .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential)\b["']?\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?[^\s&,;}"'\\\]]+/gi, '$1***')
+    .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,}|xai-[A-Za-z0-9\-_]{10,}|hf_[A-Za-z0-9\-_]{10,}|ghp_[A-Za-z0-9\-_]{10,})\b/g, '***')
+    .replace(/(\\"?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\"?\s*[:=]\s*\\")[^"]*\\"/gi, '$1***\\"')
+    .replace(/(\\'?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\'?\s*[:=]\s*\\')[^']*\\'/gi, "$1***\\'")
+    .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b["']?\s*[:=]\s*)(["'])(?:(?!\2)[^\\]|\\.)*\2/gi, '$1$2***$2')
+    .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential)\b["']?\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?[^\s&,;}"'\\\]]+/gi, '$1***')
     .replace(/(\bkey\s*=\s*)[^\s&,;}"'\\\]]+/gi, '$1***');
 
+  const NON_SECRET_LOCAL_PLACEHOLDERS = new Set([
+    'ollama', 'lm-studio', 'llamacpp', 'freecc', 'local'
+  ]);
+  const isRedactableValue = (val) => {
+    if (typeof val !== 'string') return false;
+    const trimmed = val.trim();
+    return trimmed.length >= 4 && !NON_SECRET_LOCAL_PLACEHOLDERS.has(trimmed.toLowerCase());
+  };
+
   if (config && typeof config === 'object') {
+    const cfgSecrets = [];
     for (const field of getLocalConfigKeys()) {
       if (field === 'contextFiles' || field === 'providerConfigs') continue;
       const val = config[field];
-      if (typeof val === 'string' && val.trim().length >= 4 && cleaned.includes(val.trim())) {
-        cleaned = cleaned.split(val.trim()).join('***');
+      if (isRedactableValue(val)) {
+        cfgSecrets.push(val.trim());
+      }
+    }
+    if (config.apiKeys && typeof config.apiKeys === 'object') {
+      for (const [k, val] of Object.entries(config.apiKeys)) {
+        if (/(?:apikey|secret|token|password|credential|serpapi)/i.test(k) && isRedactableValue(val)) {
+          cfgSecrets.push(val.trim());
+        } else if (k === 'providerConfigs' && val && typeof val === 'object') {
+          for (const pCfg of Object.values(val)) {
+            if (pCfg && typeof pCfg === 'object' && isRedactableValue(pCfg.apiKey)) {
+              cfgSecrets.push(pCfg.apiKey.trim());
+            }
+          }
+        }
+      }
+    }
+    if (config.providerConfigs && typeof config.providerConfigs === 'object') {
+      for (const pCfg of Object.values(config.providerConfigs)) {
+        if (pCfg && typeof pCfg === 'object' && isRedactableValue(pCfg.apiKey)) {
+          cfgSecrets.push(pCfg.apiKey.trim());
+        }
+      }
+    }
+    if (Array.isArray(config._extraRedactions)) {
+      for (const item of config._extraRedactions) {
+        if (isRedactableValue(item)) {
+          cfgSecrets.push(item.trim());
+        }
+      }
+    }
+    const orderedSecrets = Array.from(new Set(cfgSecrets)).sort((a, b) => b.length - a.length);
+    for (const s of orderedSecrets) {
+      if (cleaned.includes(s)) {
+        cleaned = cleaned.split(s).join('***');
       }
     }
   }
   return cleaned;
+}
+
+function extractHeaderRedactions(headers) {
+  const out = [];
+  if (!headers || typeof headers !== 'object') return out;
+  const pairs = typeof headers.entries === 'function'
+    ? Array.from(headers.entries())
+    : Object.entries(headers);
+  for (const [hName, hVal] of pairs) {
+    if (typeof hVal === 'string' && /^(?:x-goog-api-key|x-api-key|authorization|proxy-authorization|api-key)$/i.test(String(hName))) {
+      const trimmed = hVal.trim();
+      const bare = trimmed.replace(/^(?:Bearer|Basic|Token)\s+/i, '').trim();
+      if (bare.length >= 4) {
+        out.push(bare);
+        if (trimmed !== bare && trimmed.length >= 4) {
+          out.push(trimmed);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 async function resolveConfigForPreWarm(message) {
@@ -719,6 +921,307 @@ async function handleInjectPageBridge(message = {}, sender = {}) {
 }
 
 // ──────────────────────────────────────────────
+// F-UX-01 : Side Panel State & Panic Purge
+// ──────────────────────────────────────────────
+
+const SIDE_PANEL_SESSION_KEY = 'sidePanelQuizState';
+let _sidePanelStateFallback = null;
+let _sidePanelStateEpoch = 0;
+let _saveOpQueue = Promise.resolve();
+let _clearOpQueue = Promise.resolve();
+let _clearPendingCount = 0;
+let _activeClearDone = Promise.resolve();
+let _hasAuthoritativeMemoryState = false;
+let _lastGlobalClearAt = 0;
+const _activeSolveAbortControllers = new Set();
+
+function abortActiveSolveRequests() {
+  for (const ctrl of Array.from(_activeSolveAbortControllers)) {
+    try {
+      ctrl.abort();
+    } catch (_) { /* ignore abort errors */ }
+  }
+  _activeSolveAbortControllers.clear();
+}
+
+function runSerializedSaveOp(taskFn) {
+  const prev = _saveOpQueue;
+  let releaseNext = null;
+  _saveOpQueue = new Promise((resolve) => {
+    releaseNext = resolve;
+  });
+  return (async () => {
+    try {
+      await prev;
+    } catch (_) {
+      /* previous save failure does not block subsequent saves */
+    }
+    try {
+      return await taskFn();
+    } finally {
+      if (releaseNext) releaseNext();
+    }
+  })();
+}
+
+function enqueueClearSessionStorage() {
+  const prev = _clearOpQueue;
+  let release = null;
+  const next = new Promise((resolve) => {
+    release = resolve;
+  });
+  _clearOpQueue = next;
+  _activeClearDone = next;
+  _clearPendingCount++;
+  return (async () => {
+    try {
+      await prev;
+    } catch (_) {
+      /* previous clear failure does not block next clear */
+    }
+    try {
+      await clearSidePanelSessionStorageKey();
+    } finally {
+      _clearPendingCount = Math.max(0, _clearPendingCount - 1);
+      if (release) release();
+    }
+  })();
+}
+
+async function awaitPendingClears() {
+  while (_clearPendingCount > 0) {
+    const p = _activeClearDone;
+    try {
+      await p;
+    } catch (_) {
+      /* ignore clear errors */
+    }
+    if (_activeClearDone === p && _clearPendingCount === 0) {
+      break;
+    }
+  }
+}
+
+function sanitizeSidePanelPlainText(value, maxLen = 1200) {
+  if (typeof value !== 'string') return '';
+  const bounded = value.slice(0, Math.max(maxLen * 4, 4096));
+  const stripped = bounded
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/<!--[\s\S]*?-->|<\/[a-zA-Z][a-zA-Z0-9:-]{0,30}\s*>|<[a-zA-Z][a-zA-Z0-9:-]{0,30}(?:\s+(?:[a-zA-Z_:][a-zA-Z0-9_.:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>`]+)|disabled|checked|selected|readonly|required|multiple|hidden|open|async|defer|autofocus|controls|autoplay|loop|muted|novalidate|formnovalidate|nomodule|inert|default|reversed|ismap|data-[a-zA-Z0-9_-]+))*\s*\/?>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stripped) return '';
+  const safe = stripped.replace(/https?:\/\/[^\s"'<>\\]+/gi, (m) => sanitizeUrlForLog(m));
+  if (safe.length > maxLen && maxLen > 3) {
+    return `${safe.slice(0, maxLen - 3).trimEnd()}...`;
+  }
+  return safe.slice(0, maxLen);
+}
+
+function sanitizeSidePanelState(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const rawItems = Array.isArray(raw.items) ? raw.items.slice(0, 50) : [];
+  const items = [];
+  for (let i = 0; i < rawItems.length; i++) {
+    const entry = rawItems[i];
+    if (!entry || typeof entry !== 'object') continue;
+    const rawConf = typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)
+      ? Math.round(Math.max(0, Math.min(100, entry.confidence)))
+      : 75;
+    const tier = rawConf >= 80 ? 'high' : (rawConf >= 50 ? 'medium' : 'low');
+    const rawStatus = typeof entry.crossValidationStatus === 'string'
+      ? entry.crossValidationStatus.trim().toLowerCase()
+      : '';
+    const crossValidationStatus = ['confirmed', 'disputed', 'disagreed', 'unverified'].includes(rawStatus)
+      ? rawStatus
+      : (entry.crossValidated ? 'confirmed' : 'unverified');
+
+    const options = Array.isArray(entry.options)
+      ? entry.options
+          .slice(0, 20)
+          .map((opt) => sanitizeSidePanelPlainText(typeof opt === 'string' ? opt : (opt && opt.text) || '', 300))
+      : [];
+
+    const optionIndices = Array.isArray(entry.optionIndices)
+      ? [...new Set(entry.optionIndices.slice(0, 20).filter((n) => Number.isInteger(n) && n >= 0))]
+      : [];
+
+    const textAnswer = typeof entry.textAnswer === 'string'
+      ? sanitizeSidePanelPlainText(entry.textAnswer, 1000)
+      : null;
+
+    items.push({
+      index: Number.isInteger(entry.index) && entry.index >= 0 ? entry.index : i,
+      text: sanitizeSidePanelPlainText(entry.text || '', 1500),
+      questionType: sanitizeSidePanelPlainText(String(entry.questionType || 'unknown'), 40) || 'unknown',
+      options,
+      optionIndices,
+      textAnswer,
+      answerSummary: sanitizeSidePanelPlainText(entry.answerSummary || '', 1000),
+      confidence: rawConf,
+      confidenceTier: tier,
+      explanation: sanitizeSidePanelPlainText(entry.explanation || '', 500),
+      crossValidated: Boolean(entry.crossValidated),
+      crossValidationStatus,
+      crossValidationNote: sanitizeSidePanelPlainText(entry.crossValidationNote || '', 300)
+    });
+  }
+
+  const rawMeta = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
+  const toCount = (n, fallback = 0) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback);
+
+  return {
+    updatedAt: typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) && raw.updatedAt > 0
+      ? raw.updatedAt
+      : Date.now(),
+    tabId: Number.isInteger(raw.tabId) && raw.tabId > 0 ? raw.tabId : null,
+    hostname: sanitizeSidePanelPlainText(String(raw.hostname || ''), 255),
+    pageTitle: sanitizeSidePanelPlainText(String(raw.pageTitle || ''), 200),
+    zeroTraceMode: Boolean(raw.zeroTraceMode),
+    metadata: {
+      provider: sanitizeSidePanelPlainText(String(rawMeta.provider || ''), 60),
+      model: sanitizeSidePanelPlainText(String(rawMeta.model || ''), 120),
+      questionsTotal: toCount(rawMeta.questionsTotal, items.length),
+      answersFound: toCount(rawMeta.answersFound, items.length),
+      totalDurationMs: toCount(rawMeta.totalDurationMs, 0)
+    },
+    items
+  };
+}
+
+function broadcastExtensionRuntimeMessage(payload) {
+  if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(payload, () => {
+      void chrome.runtime?.lastError;
+    });
+  } catch (_) {
+    /* ignore when no extension view is listening */
+  }
+}
+
+async function clearSidePanelSessionStorageKey() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.session) {
+    return;
+  }
+  try {
+    if (typeof chrome.storage.session.remove === 'function') {
+      await chrome.storage.session.remove([SIDE_PANEL_SESSION_KEY]);
+    } else if (typeof chrome.storage.session.set === 'function') {
+      await chrome.storage.session.set({ [SIDE_PANEL_SESSION_KEY]: null });
+    }
+  } catch (_) {
+    /* ignore session storage errors */
+  }
+}
+
+async function handleSaveSidePanelState(message = {}, sender = {}) {
+  const raw = (message && message.state && typeof message.state === 'object') ? message.state : message;
+  const candidate = (raw && typeof raw === 'object')
+    ? { ...raw, tabId: raw.tabId ?? sender?.tab?.id ?? null }
+    : null;
+  const startedAt = candidate && typeof candidate.analysisStartedAt === 'number' && Number.isFinite(candidate.analysisStartedAt)
+    ? candidate.analysisStartedAt
+    : null;
+  if (startedAt !== null && _lastGlobalClearAt > 0 && startedAt < _lastGlobalClearAt) {
+    return { success: false, cancelled: true };
+  }
+
+  const state = sanitizeSidePanelState(candidate);
+  if (!state) {
+    return { success: false, error: 'État Side Panel invalide' };
+  }
+
+  const saveEpoch = ++_sidePanelStateEpoch;
+  _sidePanelStateFallback = state;
+  _hasAuthoritativeMemoryState = true;
+
+  return runSerializedSaveOp(async () => {
+    await awaitPendingClears();
+    if (startedAt !== null && _lastGlobalClearAt > 0 && startedAt < _lastGlobalClearAt) {
+      return { success: false, cancelled: true };
+    }
+    if (saveEpoch !== _sidePanelStateEpoch) {
+      return { success: false, cancelled: true };
+    }
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session &&
+        typeof chrome.storage.session.set === 'function') {
+      try {
+        await chrome.storage.session.set({ [SIDE_PANEL_SESSION_KEY]: state });
+      } catch (_) {
+        /* keep in-memory fallback */
+      }
+    }
+    await awaitPendingClears();
+    if (saveEpoch !== _sidePanelStateEpoch) {
+      if (_sidePanelStateFallback === null) {
+        await enqueueClearSessionStorage();
+      }
+      return { success: false, cancelled: true };
+    }
+    broadcastExtensionRuntimeMessage({ action: 'sidePanelStateUpdated', state });
+    return { success: true, state };
+  });
+}
+
+async function handleGetSidePanelState() {
+  if (_hasAuthoritativeMemoryState) {
+    return { success: true, state: _sidePanelStateFallback };
+  }
+  await awaitPendingClears();
+  if (_hasAuthoritativeMemoryState) {
+    return { success: true, state: _sidePanelStateFallback };
+  }
+  const readEpoch = _sidePanelStateEpoch;
+  let state = _sidePanelStateFallback;
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session &&
+      typeof chrome.storage.session.get === 'function') {
+    try {
+      const data = await chrome.storage.session.get([SIDE_PANEL_SESSION_KEY]);
+      if (_hasAuthoritativeMemoryState || readEpoch !== _sidePanelStateEpoch) {
+        return { success: true, state: _sidePanelStateFallback };
+      }
+      if (data && Object.prototype.hasOwnProperty.call(data, SIDE_PANEL_SESSION_KEY)) {
+        state = data[SIDE_PANEL_SESSION_KEY] ? sanitizeSidePanelState(data[SIDE_PANEL_SESSION_KEY]) : null;
+        _sidePanelStateFallback = state;
+      }
+      _hasAuthoritativeMemoryState = true;
+    } catch (_) {
+      /* keep in-memory fallback */
+    }
+  } else {
+    _hasAuthoritativeMemoryState = true;
+  }
+  return { success: true, state: _hasAuthoritativeMemoryState ? _sidePanelStateFallback : state };
+}
+
+async function handleClearSidePanelState(reason = 'clear', options = {}) {
+  _panicClearEpoch += 1;
+  _sidePanelStateEpoch += 1;
+  _sidePanelStateFallback = null;
+  _hasAuthoritativeMemoryState = true;
+  _lastGlobalClearAt = Date.now();
+  const safeReason = typeof reason === 'string' && reason.trim() ? reason.trim() : 'clear';
+  const clearId = (options && typeof options === 'object' && typeof options.clearId === 'string' && options.clearId.trim())
+    ? options.clearId.trim().slice(0, 80)
+    : null;
+  abortActiveSolveRequests();
+
+  broadcastExtensionRuntimeMessage({
+    action: 'sidePanelPanicClear',
+    reason: safeReason,
+    clearedAt: _lastGlobalClearAt,
+    ...(clearId ? { clearId } : {})
+  });
+
+  await enqueueClearSessionStorage();
+  return { success: true, cleared: true };
+}
+
+// ──────────────────────────────────────────────
 // CORS Image Proxy & Runtime Messaging
 // ──────────────────────────────────────────────
 
@@ -728,7 +1231,7 @@ function sendAsyncRuntimeResponse(sendResponse, handler, formatError) {
       const result = await handler();
       sendResponse(result);
     } catch (error) {
-      sendResponse(formatError ? formatError(error) : { success: false, error: error.message });
+      sendResponse(formatError ? formatError(error) : { success: false, error: sanitizeErrorMessage(error) });
     }
   })();
   return true;
@@ -783,15 +1286,47 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     );
   }
 
+  if (message.action === 'saveSidePanelState') {
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleSaveSidePanelState(message, sender),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
+  }
+
+  if (message.action === 'getSidePanelState') {
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleGetSidePanelState(),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
+  }
+
+  if (message.action === 'clearSidePanelState') {
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleClearSidePanelState(message.reason || 'clear', { clearId: message.clearId }),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
+  }
+
   if (message.action === 'fetchImage') {
-    return sendAsyncRuntimeResponse(sendResponse, () => handleFetchImage(message.url));
+    return sendAsyncRuntimeResponse(
+      sendResponse,
+      () => handleFetchImage(message.url),
+      error => ({ success: false, error: sanitizeErrorMessage(error) })
+    );
   }
 
   if (message.action === 'fetchLLM') {
     return sendAsyncRuntimeResponse(
       sendResponse,
       () => handleFetchLLM(message.url, message.options),
-      error => ({ success: false, networkError: true, error: error.message })
+      error => ({
+        success: false,
+        networkError: true,
+        error: sanitizeErrorMessage(error, { _extraRedactions: extractHeaderRedactions(message.options && message.options.headers) })
+      })
     );
   }
 
@@ -799,7 +1334,11 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     return sendAsyncRuntimeResponse(
       sendResponse,
       () => handleFetchSerpApi(message.query, message.apiKey),
-      error => ({ success: false, networkError: true, error: error.message })
+      error => ({
+        success: false,
+        networkError: true,
+        error: sanitizeErrorMessage(error, message.apiKey ? { serpApiKey: message.apiKey } : null)
+      })
     );
   }
 
@@ -840,24 +1379,78 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect)
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== 'solveQuiz') return;
 
+    const portControllers = new Set();
+    let portDisconnected = false;
+    if (port.onDisconnect && typeof port.onDisconnect.addListener === 'function') {
+      port.onDisconnect.addListener(() => {
+        portDisconnected = true;
+        for (const ctrl of Array.from(portControllers)) {
+          try {
+            ctrl.abort();
+          } catch (_) { /* ignore */ }
+          _activeSolveAbortControllers.delete(ctrl);
+        }
+        portControllers.clear();
+      });
+    }
+
     port.onMessage.addListener(async (message) => {
       if (message && (message.action === 'solveQuiz' || message.action === 'analyzeDelta')) {
+        const taskAbort = new AbortController();
+        portControllers.add(taskAbort);
+        _activeSolveAbortControllers.add(taskAbort);
+        if (portDisconnected) {
+          taskAbort.abort();
+        }
+        let safeConfig = (message.task && typeof message.task === 'object' && message.task.config && typeof message.task.config === 'object')
+          ? message.task.config
+          : null;
         try {
           const safeTask = (message.task && typeof message.task === 'object')
             ? { ...message.task, config: await hydrateTrustedConfig(message.task.config) }
             : message.task;
-          const result = await BackgroundAgent.solve(safeTask);
-          try { port.postMessage(result); } catch (_) { /* port fermé côté content */ }
+          if (safeTask && safeTask.config && typeof safeTask.config === 'object') {
+            safeConfig = safeTask.config;
+          }
+          if (taskAbort.signal.aborted || portDisconnected) {
+            return;
+          }
+          const result = await BackgroundAgent.solve(safeTask, { signal: taskAbort.signal });
+          if (taskAbort.signal.aborted || portDisconnected) {
+            return;
+          }
+          const outboundResult = (result && typeof result === 'object')
+            ? {
+                ...result,
+                ...(typeof result.error === 'string' ? { error: sanitizeErrorMessage(result.error, safeConfig) } : {}),
+                ...(Array.isArray(result.journal)
+                  ? {
+                      journal: result.journal.map((entry) => (
+                        entry && typeof entry === 'object' && typeof entry.message === 'string'
+                          ? { ...entry, message: sanitizeErrorMessage(entry.message, safeConfig) }
+                          : entry
+                      ))
+                    }
+                  : {})
+              }
+            : result;
+          try { port.postMessage(outboundResult); } catch (_) { /* port fermé côté content */ }
         } catch (error) {
+          if (taskAbort.signal.aborted || portDisconnected) {
+            return;
+          }
           try {
             port.postMessage({
               success: false,
               answers: [],
               metadata: { questionsTotal: 0, answersFound: 0, totalDurationMs: 0 },
               journal: [],
-              error: error.message
+              error: sanitizeErrorMessage(error, safeConfig)
             });
           } catch (_) { /* port fermé côté content */ }
+        } finally {
+          portControllers.delete(taskAbort);
+          _activeSolveAbortControllers.delete(taskAbort);
         }
       }
     });
@@ -1042,7 +1635,9 @@ async function handleFetchLLM(url, options) {
       throw fetchError;
     }
   } catch (error) {
-    const safeError = sanitizeErrorMessage(error);
+    const safeError = sanitizeErrorMessage(error, {
+      _extraRedactions: extractHeaderRedactions(options && options.headers)
+    });
     console.error("❌ fetchLLM network error:", safeError);
     return { success: false, networkError: true, error: safeError };
   }
@@ -1202,11 +1797,12 @@ async function handleFetchSerpApi(query, apiKey) {
     };
   } catch (error) {
     clearTimeout(timeoutId);
-    console.error("❌ fetchSerpApi network error:", error);
+    const safeError = sanitizeErrorMessage(error, { serpApiKey: apiKey });
+    console.error("❌ fetchSerpApi network error:", safeError);
     if (error.name === 'AbortError') {
       return { success: false, networkError: true, error: 'Timeout: SerpAPI n\'a pas répondu en 30 secondes' };
     }
-    return { success: false, networkError: true, error: error.message };
+    return { success: false, networkError: true, error: safeError };
   }
 }
 
@@ -1297,8 +1893,9 @@ async function handleFetchImage(url) {
       height
     };
   } catch (error) {
-    console.error(`❌ Image proxy failed:`, error.message);
-    return { success: false, error: error.message };
+    const safeErrMsg = sanitizeErrorMessage(error);
+    console.error('❌ Image proxy failed:', safeErrMsg);
+    return { success: false, error: safeErrMsg };
   }
 }
 
@@ -1416,6 +2013,13 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalle
         title: "Coller la réponse",
         contexts: ["all"]
       });
+
+      chrome.contextMenus.create({
+        id: "cm-open-side-panel",
+        parentId: "safe-exm-root",
+        title: "Ouvrir le panneau latéral",
+        contexts: ["all"]
+      });
     } catch (e) {
       console.error("Context Menu Creation Error:", e);
     }
@@ -1442,18 +2046,14 @@ if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.contextMenus.
         await toggleAutoMode();
         break;
 
-      case 'cm-clear-highlights':
-        try {
-          const resp = await chrome.tabs.sendMessage(tab.id, { action: 'clearHighlights' });
-          if (resp && resp.success === false) {
-            showNotification(resp.error || 'Aucune marque à effacer sur cette page.');
-          } else {
-            showNotification('Marques effacées');
-          }
-        } catch (e) {
-          showNotification('Aucune marque à effacer sur cette page.');
-        }
+      case 'cm-clear-highlights': {
+        const [, clearOk] = await Promise.all([
+          handleClearSidePanelState('panic'),
+          notifyHttpTabs({ action: 'clearHighlights', skipSidePanelClear: true }, typeof tab.id === 'number' ? tab.id : null)
+        ]);
+        showNotification(clearOk ? 'Marques effacées' : 'Marques et panneau effacés.');
         break;
+      }
 
       case 'cm-paste-answer':
         try {
@@ -1467,6 +2067,27 @@ if (typeof chrome !== 'undefined' && chrome.contextMenus && chrome.contextMenus.
           showNotification('Impossible de coller la réponse sur cette page.');
         }
         break;
+
+      case 'cm-open-side-panel': {
+        if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
+          const openTarget = typeof tab.windowId === 'number'
+            ? { windowId: tab.windowId }
+            : (typeof tab.id === 'number' ? { tabId: tab.id } : null);
+          if (openTarget) {
+            try {
+              // Appel synchrone avant tout await pour préserver le geste utilisateur MV3
+              const openPromise = chrome.sidePanel.open(openTarget);
+              await openPromise;
+              showNotification('Panneau latéral ouvert');
+            } catch (e) {
+              showNotification('Impossible d\'ouvrir le panneau latéral.');
+            }
+          }
+        } else {
+          showNotification('Panneau latéral indisponible sur ce navigateur.');
+        }
+        break;
+      }
     }
   });
 }
@@ -1478,6 +2099,10 @@ if (typeof module !== 'undefined' && module.exports) {
     handlePreWarmProviders,
     handleGetProviderStats,
     handleResetProviderStats,
+    handleSaveSidePanelState,
+    handleGetSidePanelState,
+    handleClearSidePanelState,
+    sanitizeSidePanelState,
     handleInjectPageBridge,
     handleRuntimeMessage,
     handleFetchLLM,

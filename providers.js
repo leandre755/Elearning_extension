@@ -145,6 +145,103 @@ const _ProviderNetUtils = (() => {
     }
   }
 
+  const NON_SECRET_PLACEHOLDERS = new Set([
+    'ollama', 'lm-studio', 'llamacpp', 'freecc', 'local'
+  ]);
+
+  function isRedactionSecret(val, provider = null) {
+    if (typeof val !== 'string') return false;
+    const trimmed = val.trim();
+    if (trimmed.length < 4) return false;
+    if (NON_SECRET_PLACEHOLDERS.has(trimmed.toLowerCase())) return false;
+    if (provider && provider.local === true && trimmed === (provider.staticApiKey || 'local')) {
+      return false;
+    }
+    return true;
+  }
+
+  function extractHeaderRedactions(headers) {
+    const out = [];
+    if (!headers || typeof headers !== 'object') return out;
+    const pairs = typeof headers.entries === 'function'
+      ? Array.from(headers.entries())
+      : Object.entries(headers);
+    for (const [hName, hVal] of pairs) {
+      if (typeof hVal === 'string' && /^(?:x-goog-api-key|x-api-key|authorization|proxy-authorization|api-key)$/i.test(String(hName))) {
+        const trimmed = hVal.trim();
+        const bare = trimmed.replace(/^(?:Bearer|Basic|Token)\s+/i, '').trim();
+        if (isRedactionSecret(bare)) {
+          out.push(bare);
+          if (isRedactionSecret(trimmed) && trimmed !== bare) {
+            out.push(trimmed);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  function sanitizeErrorMessage(rawError, redactionInput = null) {
+    let raw = '';
+    if (typeof rawError === 'string') {
+      raw = rawError;
+    } else if (rawError && typeof rawError.message === 'string') {
+      raw = rawError.message;
+    } else if (rawError !== undefined && rawError !== null) {
+      raw = String(rawError);
+    }
+    if (!raw) return 'Erreur inconnue';
+
+    let cleaned = raw
+      .replace(/https?:\/\/[^\s"'<>\\]+/gi, (match) => sanitizeUrl(match))
+      .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
+      .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,}|xai-[A-Za-z0-9\-_]{10,}|hf_[A-Za-z0-9\-_]{10,}|ghp_[A-Za-z0-9\-_]{10,})\b/g, '***')
+      .replace(/(\\"?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\"?\s*[:=]\s*\\")[^"]*\\"/gi, '$1***\\"')
+      .replace(/(\\'?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\'?\s*[:=]\s*\\')[^']*\\'/gi, "$1***\\'")
+      .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b["']?\s*[:=]\s*)(["'])(?:(?!\2)[^\\]|\\.)*\2/gi, '$1$2***$2')
+      .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|x-goog-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential)\b["']?\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?[^\s&,;}"'\\\]]+/gi, '$1***')
+      .replace(/(\bkey\s*=\s*)[^\s&,;}"'\\\]]+/gi, '$1***');
+
+    const extraList = Array.isArray(redactionInput)
+      ? redactionInput
+      : (typeof redactionInput === 'string' ? [redactionInput] : []);
+    const ordered = [...new Set(
+      extraList
+        .filter(item => isRedactionSecret(item))
+        .map(item => item.trim())
+    )].sort((a, b) => b.length - a.length);
+
+    for (const item of ordered) {
+      if (cleaned.includes(item)) {
+        cleaned = cleaned.split(item).join('***');
+      }
+    }
+    return cleaned;
+  }
+
+  function createSanitizedError(rawError, redactionInput = null) {
+    const safeMsg = sanitizeErrorMessage(rawError, redactionInput);
+    const wrapped = new Error(safeMsg);
+    if (rawError && typeof rawError === 'object') {
+      if (typeof rawError.status === 'number') {
+        wrapped.status = rawError.status;
+      }
+      if (typeof rawError.providerName === 'string' && rawError.providerName) {
+        wrapped.providerName = rawError.providerName;
+      }
+      if (typeof rawError.isTimeout === 'boolean') {
+        wrapped.isTimeout = rawError.isTimeout;
+      }
+      if (typeof rawError.code === 'string' && rawError.code) {
+        wrapped.code = rawError.code;
+      }
+      if (typeof rawError.name === 'string' && rawError.name && rawError.name !== 'Error') {
+        wrapped.name = rawError.name;
+      }
+    }
+    return wrapped;
+  }
+
   function createAbortError(reason) {
     if (reason instanceof Error && reason.name === 'AbortError') {
       return reason;
@@ -428,6 +525,10 @@ const _ProviderNetUtils = (() => {
 
   return {
     sanitizeUrl,
+    isRedactionSecret,
+    extractHeaderRedactions,
+    sanitizeErrorMessage,
+    createSanitizedError,
     createAbortError,
     isAbortError,
     parseRetryAfterMs,
@@ -514,19 +615,12 @@ const ProviderAnalytics = (() => {
       raw = 'Unknown error';
     }
 
-    let cleaned = raw
+    let cleaned = _ProviderNetUtils.sanitizeErrorMessage(raw)
       .replace(/https?:\/\/[^\s"'<>\\]+/gi, '[url]')
-      .replace(/\b(Bearer|Basic|Token)\s+[^\s,;}"'\\\]]+/gi, '$1 ***')
-      .replace(/\b(?:AIza[0-9A-Za-z\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|gsk_[A-Za-z0-9\-_]{10,}|nvapi-[A-Za-z0-9\-_]{10,})\b/g, '***')
-      .replace(/(\\"?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\"?\s*[:=]\s*\\")[^"]*\\"/gi, '$1***\\"')
-      .replace(/(\\'?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b\\'?\s*[:=]\s*\\')[^']*\\'/gi, "$1***\\'")
-      .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential|key)\b["']?\s*[:=]\s*)(["'])(?:(?!\2)[^\\]|\\.)*\2/gi, '$1$2***$2')
-      .replace(/(["']?\b(?:api[\s_-]?key|x-api-key|authorization|access[\s_-]?token|token|secret|auth|password|credential)\b["']?\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?[^\s,;}"'\\\]]+/gi, '$1***')
-      .replace(/(\bkey\s*=\s*)[^\s&,;}"'\\\]]+/gi, '$1***')
       .replace(/\s+/g, ' ')
       .trim();
 
-    if (!cleaned) {
+    if (!cleaned || cleaned === 'Erreur inconnue') {
       cleaned = typeof status === 'number' ? `HTTP ${status}` : 'Unknown error';
     }
     if (cleaned.length > MAX_ERROR_LENGTH) {
@@ -1286,6 +1380,7 @@ const QuizProviders = (() => {
         signal.addEventListener('abort', onAbort, { once: true });
       }
 
+      const proxyHeaderRedactions = _ProviderNetUtils.extractHeaderRedactions(serializableOptions && serializableOptions.headers);
       try {
         chrome.runtime.sendMessage({ action: 'fetchLLM', url, options: serializableOptions }, (response) => {
           if (settled) return;
@@ -1293,15 +1388,15 @@ const QuizProviders = (() => {
           cleanup();
 
           if (chrome.runtime.lastError) {
-            return reject(new Error(chrome.runtime.lastError.message));
+            return reject(_ProviderNetUtils.createSanitizedError(chrome.runtime.lastError.message, proxyHeaderRedactions));
           }
           if (!response) {
             return reject(new Error('Pas de réponse du proxy'));
           }
           if (response.networkError || response.success === false) {
-            const msg = response.error || 'Erreur proxy LLM';
-            const err = new Error(msg);
-            if (msg.includes('non autorisée') || msg.startsWith('Timeout:')) {
+            const rawMsg = response.error || 'Erreur proxy LLM';
+            const err = _ProviderNetUtils.createSanitizedError(rawMsg, proxyHeaderRedactions);
+            if (rawMsg.includes('non autorisée') || rawMsg.startsWith('Timeout:')) {
               err.retryable = false;
             } else if (response.networkError) {
               err.networkError = true;
@@ -1321,7 +1416,7 @@ const QuizProviders = (() => {
         if (!settled) {
           settled = true;
           cleanup();
-          reject(err);
+          reject(_ProviderNetUtils.createSanitizedError(err, proxyHeaderRedactions));
         }
       }
     });
@@ -1492,6 +1587,8 @@ const QuizProviders = (() => {
       externalSignal.addEventListener('abort', externalAbortHandler, { once: true });
     }
 
+    const headerRedactions = _ProviderNetUtils.extractHeaderRedactions(options && options.headers);
+
     try {
       // Retirer le signal externe des options, on utilise notre controller unifié et interdire les redirections HTTP
       const { signal: _ignoredSignal, ...restOptions } = options || {};
@@ -1511,7 +1608,7 @@ const QuizProviders = (() => {
         timeoutErr.isTimeout = true;
         throw timeoutErr;
       }
-      throw error;
+      throw _ProviderNetUtils.createSanitizedError(error, headerRedactions);
     } finally {
       if (externalSignal && externalAbortHandler) {
         externalSignal.removeEventListener('abort', externalAbortHandler);
@@ -1860,7 +1957,7 @@ const QuizProviders = (() => {
     // Add text
     parts.push({ text: userPrompt });
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const generationConfig = {
       maxOutputTokens: maxTokens
@@ -1902,7 +1999,7 @@ const QuizProviders = (() => {
 
     const response = await extensionFetch(apiUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(requestPayload),
       signal: extraConfig?.signal,
       retry: extraConfig?.retry
@@ -2002,15 +2099,17 @@ const QuizProviders = (() => {
       });
       return result;
     } catch (error) {
+      const keyForRedact = _ProviderNetUtils.isRedactionSecret(resolvedKey, provider) ? resolvedKey : null;
+      const safeErr = _ProviderNetUtils.createSanitizedError(error, keyForRedact);
       ProviderAnalytics.record({
         provider: normalizedKey,
         model,
         ok: false,
         latencyMs: Date.now() - startedAt,
-        status: error?.status,
-        error
+        status: safeErr?.status,
+        error: safeErr
       });
-      throw error;
+      throw safeErr;
     }
   }
 
@@ -2104,7 +2203,9 @@ const QuizProviders = (() => {
         if (_ProviderNetUtils.isAbortError(error, signal)) {
           throw error;
         }
-        console.warn(`   ⚠️ ${provider.name} (Modèle principal ${model}) a échoué: ${error.message}`);
+        const keyForRedact = _ProviderNetUtils.isRedactionSecret(apiKey, provider) ? apiKey : null;
+        const safeErrMsg = _ProviderNetUtils.sanitizeErrorMessage(error, keyForRedact);
+        console.warn(`   ⚠️ ${provider.name} (Modèle principal ${model}) a échoué: ${safeErrMsg}`);
 
         // Tentative de fallback interne sur les modèles alternatifs du même provider
         const syncedCandidates = provider.genericProtocolConnector === true
@@ -2139,7 +2240,8 @@ const QuizProviders = (() => {
               if (_ProviderNetUtils.isAbortError(altError, signal)) {
                 throw altError;
               }
-              console.warn(`     ❌ Échec du modèle alternatif ${altModel.id}: ${altError.message}`);
+              const safeAltErrMsg = _ProviderNetUtils.sanitizeErrorMessage(altError, keyForRedact);
+              console.warn(`     ❌ Échec du modèle alternatif ${altModel.id}: ${safeAltErrMsg}`);
             }
           }
         }
@@ -2157,12 +2259,12 @@ const QuizProviders = (() => {
         }
 
         if (isForcedSelection) {
-          console.error(`   ❌ ${provider.name} (Forcé, tous les modèles ont échoué): ${error.message}`);
-          throw error; // Arrêt si choix forcé par l'utilisateur
+          console.error(`   ❌ ${provider.name} (Forcé, tous les modèles ont échoué): ${safeErrMsg}`);
+          throw _ProviderNetUtils.createSanitizedError(error, keyForRedact); // Arrêt si choix forcé par l'utilisateur
         }
 
         // Non-quota error on non-forced provider: log but continue trying
-        console.error(`   ❌ ${provider.name} (tous les modèles ont échoué): ${error.message}`);
+        console.error(`   ❌ ${provider.name} (tous les modèles ont échoué): ${safeErrMsg}`);
         continue;
       }
     }
@@ -2359,6 +2461,7 @@ const QuizProviders = (() => {
     getAllApiKeyFields,
     getAllStorageKeys,
     extensionFetch,
+    sanitizeErrorMessage: _ProviderNetUtils.sanitizeErrorMessage,
     preWarmProviders,
     getWarmupStatus,
     fetchWithRetry,
@@ -2447,11 +2550,14 @@ const ModelRegistry = (() => {
    * @returns {Promise<Array|null>}
    */
   async function _fetchGeminiModels(apiKey) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`;
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=100';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const resp = await QuizProviders.extensionFetch(url, { signal: controller.signal });
+      const resp = await QuizProviders.extensionFetch(url, {
+        headers: { 'x-goog-api-key': apiKey },
+        signal: controller.signal
+      });
       clearTimeout(timer);
       if (!resp.ok) {
         console.warn(`⚠️ ModelRegistry Gemini: HTTP ${resp.status}`);
@@ -2481,7 +2587,8 @@ const ModelRegistry = (() => {
     } catch (e) {
       clearTimeout(timer);
       if (e.name !== 'AbortError') {
-        console.warn(`⚠️ ModelRegistry Gemini: erreur fetch - ${e.message}`);
+        const safeErrMsg = _ProviderNetUtils.sanitizeErrorMessage(e, apiKey);
+        console.warn(`⚠️ ModelRegistry Gemini: erreur fetch - ${safeErrMsg}`);
       }
       return null;
     }
@@ -2533,7 +2640,8 @@ const ModelRegistry = (() => {
       } catch (e) {
         clearTimeout(timer);
         if (e.name !== 'AbortError') {
-          console.warn(`⚠️ ModelRegistry Mistral [${new URL(url).origin}]: erreur fetch - ${e.message}`);
+          const safeErrMsg = _ProviderNetUtils.sanitizeErrorMessage(e, _ProviderNetUtils.isRedactionSecret(apiKey) ? apiKey : null);
+          console.warn(`⚠️ ModelRegistry Mistral [${new URL(url).origin}]: erreur fetch - ${safeErrMsg}`);
         }
       }
     }
@@ -2636,7 +2744,8 @@ const ModelRegistry = (() => {
     } catch (e) {
       clearTimeout(timer);
       if (e.name !== 'AbortError') {
-        console.warn(`⚠️ ModelRegistry [${normKey}]: erreur fetch - ${e.message}`);
+        const safeErrMsg = _ProviderNetUtils.sanitizeErrorMessage(e, _ProviderNetUtils.isRedactionSecret(apiKey, provider) ? apiKey : null);
+        console.warn(`⚠️ ModelRegistry [${normKey}]: erreur fetch - ${safeErrMsg}`);
       }
       return null;
     }
@@ -2666,7 +2775,8 @@ const ModelRegistry = (() => {
           : `${baseUrl.replace(/\/+$/, '')}${listPath}`;
       }
     } catch (err) {
-      console.warn(`⚠️ ModelRegistry [${providerKey}]: URL invalide - ${err.message}`);
+      const safeErrMsg = _ProviderNetUtils.sanitizeErrorMessage(err, _ProviderNetUtils.isRedactionSecret(apiKey, provider) ? apiKey : null);
+      console.warn(`⚠️ ModelRegistry [${providerKey}]: URL invalide - ${safeErrMsg}`);
       return null;
     }
 
@@ -2749,7 +2859,8 @@ const ModelRegistry = (() => {
     } catch (e) {
       clearTimeout(timer);
       if (e.name !== 'AbortError') {
-        console.warn(`⚠️ ModelRegistry [${providerKey}]: erreur fetch - ${e.message}`);
+        const safeErrMsg = _ProviderNetUtils.sanitizeErrorMessage(e, _ProviderNetUtils.isRedactionSecret(apiKey, provider) ? apiKey : null);
+        console.warn(`⚠️ ModelRegistry [${providerKey}]: erreur fetch - ${safeErrMsg}`);
       }
       return null;
     }
